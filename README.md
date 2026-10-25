@@ -100,6 +100,8 @@ every ten minutes, re-reading only files that changed.
 - The heart (or L) marks a favourite; play counts are kept for later mixes
 - While browsing, a glass player bar sits at the bottom; click it to go back to Now Playing
 - Click a song to play that whole list from there, or use Play / Shuffle
+- Colours follow the artwork, or pick a fixed theme (Aurora, Sunset, Ocean…) in Settings
+- The ↑ button shows the version and checks GitHub for a new release
 
 To take a folder out of the library, open Settings (Ctrl+,) and press × next
 to it. Its files stay on disk; Nava just stops listing them. Only real audio and
