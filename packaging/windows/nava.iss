@@ -6,6 +6,8 @@
   #define SrcDir "..\..\dist\nava"
 #endif
 
+#define SysEnv "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+
 [Setup]
 AppId={{6F2B3C1E-6A1D-4E3B-9B8E-4D7A0C2F9A11}
 AppName=Nava
@@ -37,20 +39,56 @@ Name: "{group}\Nava"; Filename: "{app}\nava.exe"
 Name: "{autodesktop}\Nava"; Filename: "{app}\nava.exe"; Tasks: desktopicon
 
 [Registry]
-Root: HKA; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Tasks: addtopath; Check: NeedsAddPath(ExpandConstant('{app}'))
+; PATH lives in different places for "just me" and "all users" installs.
+Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Tasks: addtopath; Check: (not IsAdminInstallMode) and NeedsAddPath(ExpandConstant('{app}'))
+Root: HKLM; Subkey: "{#SysEnv}"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Tasks: addtopath; Check: IsAdminInstallMode and NeedsAddPath(ExpandConstant('{app}'))
 
 [Run]
 Filename: "{app}\nava.exe"; Description: "{cm:LaunchProgram,Nava}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+procedure EnvKey(var Root: Integer; var Key: string);
+begin
+  if IsAdminInstallMode then
+  begin
+    Root := HKEY_LOCAL_MACHINE;
+    Key := '{#SysEnv}';
+  end
+  else
+  begin
+    Root := HKEY_CURRENT_USER;
+    Key := 'Environment';
+  end;
+end;
+
 function NeedsAddPath(Dir: string): boolean;
 var
-  Paths: string;
+  Root: Integer;
+  Key, Paths: string;
 begin
-  if not RegQueryStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', Paths) then
+  EnvKey(Root, Key);
+  if not RegQueryStringValue(Root, Key, 'Path', Paths) then
   begin
     Result := True;
     exit;
   end;
   Result := Pos(';' + Uppercase(Dir) + ';', ';' + Uppercase(Paths) + ';') = 0;
+end;
+
+{ Take our folder back out of PATH on uninstall. }
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Root, P: Integer;
+  Key, Paths, Dir: string;
+begin
+  if CurUninstallStep <> usPostUninstall then exit;
+  EnvKey(Root, Key);
+  if not RegQueryStringValue(Root, Key, 'Path', Paths) then exit;
+  Dir := ExpandConstant('{app}');
+  P := Pos(';' + Uppercase(Dir), Uppercase(Paths));
+  if P > 0 then
+  begin
+    Delete(Paths, P, Length(Dir) + 1);
+    RegWriteExpandStringValue(Root, Key, 'Path', Paths);
+  end;
 end;
