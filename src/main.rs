@@ -3,6 +3,7 @@
 
 mod browse;
 mod catalog;
+mod community;
 mod eq;
 mod ipc;
 mod library;
@@ -212,8 +213,42 @@ fn fmt_time(t: f64) -> String {
     }
 }
 
+fn rgb(c: u32) -> slint::Color {
+    slint::Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8)
+}
+
+/// A fixed colour theme, for when the glow shouldn't follow the artwork.
+/// Four corner colours (top-left, top-right, bottom-left, bottom-right) and an accent.
+struct FixedTheme {
+    name: &'static str,
+    glow: [u32; 4],
+    accent: u32,
+}
+
+impl FixedTheme {
+    fn palette(&self) -> meta::Palette {
+        let avg = |shift: u32| self.glow.iter().map(|c| (c >> shift) & 255).sum::<u32>() / 4;
+        meta::Palette { accent: self.accent, mood: (avg(16) << 16) | (avg(8) << 8) | avg(0), glow: self.glow }
+    }
+}
+
+const COLOR_THEMES: &[FixedTheme] = &[
+    FixedTheme { name: "Aurora", glow: [0x1f7a86, 0x5b3fa0, 0x2f9a6e, 0x2a4f9a], accent: 0x3fcfae },
+    FixedTheme { name: "Sunset", glow: [0xd0603a, 0xb8346a, 0xe09a3a, 0x6a2a7a], accent: 0xff7a59 },
+    FixedTheme { name: "Ocean", glow: [0x1d4f8f, 0x2a94b8, 0x173a6a, 0x3a6fc0], accent: 0x4aa8ff },
+    FixedTheme { name: "Rose", glow: [0xc0457a, 0x8a3a9a, 0xe07a8a, 0x5a2a6a], accent: 0xf0608f },
+    FixedTheme { name: "Synthwave", glow: [0x7a2ac0, 0xd0389a, 0x2a3ab0, 0x20a0c0], accent: 0xc060ff },
+    FixedTheme { name: "Forest", glow: [0x2f6a3a, 0x7a8a2a, 0x1f4a4f, 0x8a6a3a], accent: 0x7ccf6a },
+    FixedTheme { name: "Ember", glow: [0xa8501f, 0x6a2a2f, 0xc0902a, 0x8a3a3a], accent: 0xffa040 },
+    FixedTheme { name: "Graphite", glow: [0x3a3f4a, 0x5a5468, 0x2a3038, 0x4a5a66], accent: 0xa8b4d0 },
+];
+
 struct Player {
     ui: slint::Weak<AppWindow>,
+    /// Colours from the current artwork, kept for when "Auto" is picked again.
+    art_palette: Option<meta::Palette>,
+    /// 0 = follow the artwork, otherwise a fixed theme from COLOR_THEMES (1-based).
+    color_theme: usize,
     mpv: Arc<Mpv>,
     store: Store,
     session: String,
@@ -703,17 +738,55 @@ impl Player {
         ui.set_artwork(Image::from_rgba8(art.cover));
         ui.set_artwork_small(Image::from_rgba8(art.small));
         ui.set_artwork_generated(art.generated);
-        let color = |c: u32| slint::Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8);
+        // The "Auto" swatch always shows the artwork's own colours.
         let [a, b, c, d] = art.palette.glow;
-        ui.set_glow_1(color(a));
-        ui.set_glow_2(color(b));
-        ui.set_glow_3(color(c));
-        ui.set_glow_4(color(d));
-        let c = art.palette.accent;
-        ui.set_accent(slint::Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8));
-        let m = art.palette.mood;
+        ui.set_art_colors(ModelRc::new(VecModel::from(vec![rgb(a), rgb(b), rgb(c), rgb(d), rgb(art.palette.accent)])));
+        self.art_palette = Some(art.palette);
+        self.apply_colors();
+    }
+
+    /// Paint the glow and accent from the artwork, or from the chosen fixed theme.
+    fn apply_colors(&mut self) {
+        let palette = match self.color_theme.checked_sub(1).and_then(|i| COLOR_THEMES.get(i)) {
+            Some(t) => t.palette(),
+            None => match self.art_palette {
+                Some(p) => p,
+                None => return,
+            },
+        };
+        let ui = self.ui();
+        let [a, b, c, d] = palette.glow;
+        ui.set_glow_1(rgb(a));
+        ui.set_glow_2(rgb(b));
+        ui.set_glow_3(rgb(c));
+        ui.set_glow_4(rgb(d));
+        ui.set_accent(rgb(palette.accent));
+        let m = palette.mood;
         let lum = (0.2126 * ((m >> 16) & 255) as f32 + 0.7152 * ((m >> 8) & 255) as f32 + 0.0722 * (m & 255) as f32) / 255.0;
         ui.set_mood_lum(lum);
+    }
+
+    fn set_color_theme(&mut self, i: usize) {
+        self.color_theme = if i <= COLOR_THEMES.len() { i } else { 0 };
+        self.store.set_setting("color_theme", COLOR_THEMES.get(self.color_theme.wrapping_sub(1)).map_or("auto", |t| t.name));
+        self.ui().set_color_theme(self.color_theme as i32);
+        self.apply_colors();
+    }
+
+    fn load_color_theme(&mut self) {
+        let ui = self.ui();
+        let themes: Vec<ColorTheme> = COLOR_THEMES
+            .iter()
+            .map(|t| ColorTheme {
+                name: t.name.into(),
+                colors: ModelRc::new(VecModel::from(vec![rgb(t.glow[0]), rgb(t.glow[1]), rgb(t.glow[2]), rgb(t.glow[3]), rgb(t.accent)])),
+            })
+            .collect();
+        ui.set_color_themes(ModelRc::new(VecModel::from(themes)));
+        let saved = self.store.setting("color_theme").unwrap_or_default();
+        self.color_theme = COLOR_THEMES.iter().position(|t| t.name == saved).map_or(0, |i| i + 1);
+        ui.set_color_theme(self.color_theme as i32);
+        self.apply_colors();
     }
 
     fn play_pause(&mut self) {
@@ -1892,6 +1965,8 @@ fn run() -> anyhow::Result<()> {
             eq: eq::Eq::default(),
             pause_on_lock: true,
             paused_by_lock: false,
+            art_palette: None,
+            color_theme: 0,
             sleep: None,
             sleep_timer: Timer::default(),
             sleep_label_timer: Timer::default(),
@@ -1958,6 +2033,9 @@ fn run() -> anyhow::Result<()> {
     ui.on_glass_changed(|g| {
         with(|p| p.store.set_setting("glass", &format!("{g:.3}")));
     });
+    ui.on_color_theme_changed(|i| {
+        with(|p| p.set_color_theme(i.max(0) as usize));
+    });
     ui.on_theme_changed(|t| {
         with(|p| p.store.set_setting("theme", &t.to_string()));
     });
@@ -1979,6 +2057,19 @@ fn run() -> anyhow::Result<()> {
     ui.window().on_close_requested(|| {
         with(|p| p.close_window());
         slint::CloseRequestResponse::KeepWindowShown
+    });
+    ui.on_check_updates(|| {
+        with(|p| p.check_updates(true));
+    });
+    ui.on_open_page(|page| {
+        community::open_url(match page.as_str() {
+            "telegram" => community::TELEGRAM_URL,
+            "releases" => community::RELEASES_URL,
+            _ => community::GITHUB_URL,
+        });
+    });
+    ui.on_community_closed(|how| {
+        with(|p| p.community_closed(&how));
     });
     ui.on_show_view(|v| {
         with(|p| p.show_view(&v));
@@ -2207,12 +2298,18 @@ fn run() -> anyhow::Result<()> {
         p.init_library();
         p.load_eq();
         p.load_lyrics_settings();
+        p.load_color_theme();
         p.refresh_tool_menus();
+        p.start_community(relaunched);
     });
-    // Open on a library view, e.g. NAVA_VIEW=albums (handy for screenshots).
+    // Open on a library view, e.g. NAVA_VIEW=albums, or NAVA_VIEW=settings (handy for screenshots).
     if let Ok(v) = std::env::var("NAVA_VIEW") {
         Timer::single_shot(Duration::from_millis(800), move || {
-            with(|p| p.show_view(&v));
+            with(|p| match v.as_str() {
+                "settings" => p.ui().set_show_settings(true),
+                "about" => p.ui().set_show_update_sheet(true),
+                _ => p.show_view(&v),
+            });
         });
     }
 

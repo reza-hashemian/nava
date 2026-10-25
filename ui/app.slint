@@ -59,6 +59,12 @@ export struct LyricLine {
     text: string,
 }
 
+// A fixed colour theme: four glow colours and the accent, last.
+export struct ColorTheme {
+    name: string,
+    colors: [color],
+}
+
 export struct SessionRow {
     name: string,
     icon: string,
@@ -599,6 +605,51 @@ component Sheet inherits Rectangle {
     animate appear { duration: 280ms; easing: cubic-bezier(0.2, 1.2, 0.4, 1); }
 }
 
+// A round swatch painted with a theme's glow, with its accent as a dot.
+component ColorSwatch inherits Rectangle {
+    in property <[color]> colors;
+    in property <bool> selected;
+    in property <bool> auto;
+    callback clicked();
+    width: 34px;
+    height: 34px;
+    border-radius: self.width / 2;
+    border-width: 2px;
+    border-color: selected ? Theme.fg : ta.has-hover ? Theme.muted : transparent;
+    animate border-color { duration: 140ms; }
+    Rectangle {
+        x: 4px;
+        y: 4px;
+        width: parent.width - 8px;
+        height: parent.height - 8px;
+        border-radius: self.width / 2;
+        clip: true;
+        background: @linear-gradient(135deg, root.colors[0] 0%, root.colors[1] 38%, root.colors[2] 66%, root.colors[3] 100%);
+        // A soft light from the top, so it reads as a glassy bead.
+        Rectangle {
+            background: @linear-gradient(180deg, #ffffff40 0%, #ffffff00 55%);
+        }
+        if root.auto: Icon {
+            icon: Icons.sparkle;
+            tint: white;
+            width: 13px;
+            height: 13px;
+        }
+        if !root.auto: Rectangle {
+            width: 9px;
+            height: 9px;
+            border-radius: 4.5px;
+            background: root.colors[4];
+            border-width: 1px;
+            border-color: #ffffffa0;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 component SettingRow inherits HorizontalLayout {
     in property <string> label;
     in property <string> hint;
@@ -619,6 +670,49 @@ component SettingRow inherits HorizontalLayout {
         }
     }
     @children
+}
+
+// A soft pill that opens a web page: "Telegram", "GitHub".
+component LinkChip inherits Rectangle {
+    in property <string> icon;
+    in property <string> text;
+    in property <bool> filled: false;
+    callback clicked();
+    height: 36px;
+    horizontal-stretch: 1;
+    border-radius: 11px;
+    background: filled
+        ? (ta.pressed ? Theme.accent.darker(0.15) : ta.has-hover ? Theme.accent.brighter(0.08) : Theme.accent)
+        : (ta.pressed ? Theme.hover.darker(0.2) : ta.has-hover ? Theme.hover : Theme.faint);
+    // Only the filled chip glows; a 0px blur still paints a hard dark slab.
+    drop-shadow-blur: filled ? 14px : 0px;
+    drop-shadow-offset-y: filled ? 5px : 0px;
+    drop-shadow-color: filled ? Theme.accent.with-alpha(0.3) : transparent;
+    animate background { duration: 140ms; }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 7px;
+        alignment: center;
+        Icon {
+            icon: root.icon;
+            tint: root.filled ? Theme.on-accent : Theme.fg;
+            width: 16px;
+            height: 16px;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.text;
+            color: root.filled ? Theme.on-accent : Theme.fg;
+            font-size: 13px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
 }
 
 // The menu-bar / tray icon.
@@ -706,6 +800,11 @@ export component AppWindow inherits Window {
     in property <bool> artwork-generated;
     in property <color> accent: #e0587b;
     in property <float> mood-lum: 0.4;
+    // Colours: 0 follows the artwork, otherwise a fixed theme (1-based).
+    in property <[ColorTheme]> color-themes;
+    in property <[color]> art-colors: [#3a2a4a, #2a3050, #4a2a3a, #30284a, #e0587b];
+    in-out property <int> color-theme: 0;
+    callback color-theme-changed(int);
 
     // Appearance
     in-out property <float> glass: 0.8;
@@ -747,6 +846,15 @@ export component AppWindow inherits Window {
     in-out property <bool> show-equalizer;
     in-out property <bool> show-link-sheet;
     in-out property <bool> show-delete-sheet;
+    // Updates and the community card.
+    in-out property <bool> show-update-sheet;
+    in property <string> app-version;
+    in property <string> update-status; // "", "checking", "latest", "available", "failed"
+    in property <string> update-latest;
+    in property <bool> show-community;
+    callback check-updates();
+    callback open-page(string); // "releases", "github", "telegram"
+    callback community-closed(string); // "later", "never", "followed"
     in property <string> delete-title;
     in property <string> delete-path;
     in property <bool> has-ytdlp: true;
@@ -948,9 +1056,9 @@ export component AppWindow inherits Window {
                     root.go-back();
                     return accept;
                 }
-                if e.text == Key.Escape { root.show-settings = false; root.show-open-sheet = false; root.show-equalizer = false; root.show-link-sheet = false; root.show-delete-sheet = false; return accept; }
+                if e.text == Key.Escape { root.show-settings = false; root.show-open-sheet = false; root.show-equalizer = false; root.show-link-sheet = false; root.show-delete-sheet = false; root.show-update-sheet = false; return accept; }
                 if root.show-delete-sheet && e.text == Key.Return { root.confirm-delete(); return accept; }
-                if root.show-open-sheet || root.show-settings || root.show-equalizer || root.show-link-sheet || root.show-delete-sheet { return reject; }
+                if root.show-open-sheet || root.show-settings || root.show-equalizer || root.show-link-sheet || root.show-delete-sheet || root.show-update-sheet { return reject; }
                 if e.text == Key.Delete && root.has-track { root.row-action("queue", root.current-index, "trash"); return accept; }
                 if root.show-video && (e.text == "f" || e.text == "F") { root.toggle-fullscreen(); return accept; }
                 if root.video-mode && (e.text == "v" || e.text == "V") { root.video-browse = !root.video-browse; return accept; }
@@ -1225,6 +1333,14 @@ export component AppWindow inherits Window {
                                 size: 32px;
                                 icon-size: 17px;
                                 clicked => { root.show-settings = true; }
+                            }
+                            IconButton {
+                                icon: Icons.update;
+                                tint: root.update-status == "available" ? Theme.accent : Theme.muted;
+                                size: 32px;
+                                icon-size: 17px;
+                                badge: root.update-status == "available" ? " " : "";
+                                clicked => { root.show-update-sheet = true; }
                             }
                             Rectangle { }
                         }
@@ -3395,6 +3511,38 @@ export component AppWindow inherits Window {
                     changed(i) => { root.theme-changed(i); }
                 }
             }
+            VerticalLayout {
+                spacing: 8px;
+                HorizontalLayout {
+                    Text {
+                        text: "Colors";
+                        color: Theme.fg;
+                        font-size: 14px;
+                        font-weight: 500;
+                    }
+                    Text {
+                        text: root.color-theme == 0 ? "From the artwork" : root.color-themes[root.color-theme - 1].name;
+                        color: Theme.muted;
+                        font-size: 13px;
+                        horizontal-alignment: right;
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: space-between;
+                    ColorSwatch {
+                        colors: root.art-colors;
+                        auto: true;
+                        selected: root.color-theme == 0;
+                        clicked => { root.color-theme = 0; root.color-theme-changed(0); }
+                    }
+                    for t[i] in root.color-themes: ColorSwatch {
+                        colors: t.colors;
+                        selected: root.color-theme == i + 1;
+                        clicked => { root.color-theme = i + 1; root.color-theme-changed(i + 1); }
+                    }
+                }
+            }
             SettingRow {
                 label: "Find lyrics online";
                 hint: "Asks LRCLIB with the song's title and artist.";
@@ -3490,6 +3638,189 @@ export component AppWindow inherits Window {
                 PrimaryButton {
                     text: "Done";
                     clicked => { root.show-settings = false; }
+                }
+            }
+        }
+
+        // ---------- Updates & about ----------
+        if root.show-update-sheet && !root.mini: Sheet {
+            card-width: 380px;
+            dismiss => { root.show-update-sheet = false; }
+            VerticalLayout {
+                spacing: 6px;
+                alignment: center;
+                Rectangle {
+                    height: 76px;
+                    Image {
+                        source: @image-url("icons/nava-128.png");
+                        width: 76px;
+                        height: 76px;
+                    }
+                }
+                Text {
+                    text: "Nava";
+                    color: Theme.fg;
+                    font-size: 22px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "Version " + root.app-version;
+                    color: Theme.muted;
+                    font-size: 12.5px;
+                    horizontal-alignment: center;
+                }
+            }
+            if root.update-status != "": Rectangle {
+                height: 40px;
+                border-radius: 11px;
+                background: root.update-status == "available" ? Theme.accent.with-alpha(0.14) : Theme.faint;
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 8px;
+                    alignment: center;
+                    if root.update-status != "checking": Icon {
+                        icon: root.update-status == "available" ? Icons.sparkle : root.update-status == "latest" ? Icons.check : Icons.close;
+                        tint: root.update-status == "available" || root.update-status == "latest" ? Theme.accent : Theme.muted;
+                        width: 16px;
+                        height: 16px;
+                        y: (parent.height - self.height) / 2;
+                    }
+                    Text {
+                        text: root.update-status == "checking" ? "Checking for updates…"
+                            : root.update-status == "latest" ? "You're on the latest version."
+                            : root.update-status == "available" ? "Nava " + root.update-latest + " is out."
+                            : "Couldn't reach GitHub. Try again later.";
+                        color: root.update-status == "failed" ? Theme.muted : Theme.fg;
+                        font-size: 13px;
+                        font-weight: 500;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                if root.update-status == "available": LinkChip {
+                    icon: Icons.update;
+                    text: "Download " + root.update-latest;
+                    filled: true;
+                    clicked => { root.open-page("releases"); }
+                }
+                if root.update-status != "available": LinkChip {
+                    icon: Icons.update;
+                    text: root.update-status == "checking" ? "Checking…" : "Check for updates";
+                    filled: true;
+                    clicked => { if root.update-status != "checking" { root.check-updates(); } }
+                }
+                LinkChip {
+                    icon: Icons.link;
+                    text: "Releases";
+                    clicked => { root.open-page("releases"); }
+                }
+            }
+            Rectangle {
+                height: 1px;
+                background: Theme.faint;
+            }
+            VerticalLayout {
+                spacing: 10px;
+                Text {
+                    text: "News and new versions come out on Telegram first.";
+                    color: Theme.muted;
+                    font-size: 12.5px;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    LinkChip {
+                        icon: Icons.send;
+                        text: "Telegram";
+                        clicked => { root.open-page("telegram"); }
+                    }
+                    LinkChip {
+                        icon: Icons.star;
+                        text: "GitHub";
+                        clicked => { root.open-page("github"); }
+                    }
+                }
+            }
+        }
+
+        // ---------- Community card: rare, small, out of the way ----------
+        if root.show-community && !root.mini && !root.show-video: community := Rectangle {
+            property <float> appear: 0;
+            init => { self.appear = 1; }
+            width: 318px;
+            height: card.preferred-height;
+            x: root.width - self.width - 18px + (1 - self.appear) * 24px;
+            y: root.height - self.height - 18px;
+            opacity: self.appear;
+            animate appear { duration: 420ms; easing: cubic-bezier(0.2, 1.1, 0.3, 1); }
+            card := GlassCard {
+                width: 100%;
+                height: 100%;
+                // Keep clicks from reaching whatever is underneath.
+                TouchArea { }
+                VerticalLayout {
+                    padding: 16px;
+                    padding-top: 14px;
+                    spacing: 12px;
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Image {
+                            source: @image-url("icons/nava-128.png");
+                            width: 42px;
+                            height: 42px;
+                        }
+                        VerticalLayout {
+                            spacing: 3px;
+                            Text {
+                                text: "Enjoying Nava?";
+                                color: Theme.fg;
+                                font-size: 14.5px;
+                                font-weight: 700;
+                            }
+                            Text {
+                                text: "Follow the Telegram channel for news and new versions. A star on GitHub helps others find it.";
+                                color: Theme.muted;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+                        }
+                        IconButton {
+                            icon: Icons.close;
+                            tint: Theme.muted;
+                            size: 24px;
+                            icon-size: 11px;
+                            clicked => { root.community-closed("later"); }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        LinkChip {
+                            icon: Icons.send;
+                            text: "Telegram";
+                            filled: true;
+                            clicked => { root.open-page("telegram"); root.community-closed("followed"); }
+                        }
+                        LinkChip {
+                            icon: Icons.star;
+                            text: "GitHub";
+                            clicked => { root.open-page("github"); root.community-closed("followed"); }
+                        }
+                    }
+                    Text {
+                        text: "Don't show this again";
+                        color: never-ta.has-hover ? Theme.fg : Theme.muted;
+                        font-size: 11.5px;
+                        horizontal-alignment: center;
+                        never-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.community-closed("never"); }
+                        }
+                    }
                 }
             }
         }
