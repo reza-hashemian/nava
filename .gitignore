@@ -1,0 +1,5 @@
+/target
+/dist
+/AppDir
+*.AppImage
+jafplayer-spec.html

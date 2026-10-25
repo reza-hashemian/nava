@@ -1,0 +1,3498 @@
+import { ListView, Palette } from "std-widgets.slint";
+import {
+    Theme, Icons, Icon, IconButton, PlayButton, NSlider, Segmented, Switch, BandSlider,
+    PrimaryButton, GhostButton, TrafficLights, GlassCard, SectionLabel
+} from "widgets.slint";
+
+import "fonts/Inter-Regular.ttf";
+import "fonts/Inter-Medium.ttf";
+import "fonts/Inter-SemiBold.ttf";
+import "fonts/Inter-Bold.ttf";
+
+export { Theme }
+
+export struct TrackRow {
+    title: string,
+    artist: string,
+    duration: string,
+}
+
+export struct TrackOption {
+    id: string,
+    label: string,
+    selected: bool,
+}
+
+export struct LibRow {
+    title: string,
+    artist: string,
+    album: string,
+    duration: string,
+    favorite: bool,
+    current: bool,
+}
+
+export struct AlbumCell {
+    name: string,
+    artist: string,
+    cover: image,
+    has-cover: bool,
+    tint: color,
+}
+
+export struct AlbumRow {
+    cells: [AlbumCell],
+}
+
+export struct ArtistRow {
+    name: string,
+    count: string,
+    tint: color,
+}
+
+export struct Bookmark {
+    time: string,
+    note: string,
+}
+
+export struct LyricLine {
+    text: string,
+}
+
+export struct SessionRow {
+    name: string,
+    icon: string,
+    subtitle: string,
+    // Made by you, so it can be deleted (Main, Code and Relax stay).
+    custom: bool,
+}
+
+// "3:07", or "1:02:44" for long files.
+global Fmt {
+    public pure function two(n: int) -> string {
+        return n < 10 ? "0" + n : "" + n;
+    }
+    public pure function time(t: float) -> string {
+        return t >= 3600
+            ? Math.floor(t / 3600) + ":" + two(Math.mod(Math.floor(t / 60), 60)) + ":" + two(Math.mod(Math.floor(t), 60))
+            : Math.floor(Math.max(t, 0) / 60) + ":" + two(Math.mod(Math.floor(Math.max(t, 0)), 60));
+    }
+}
+
+component SidebarItem inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <string> subtitle;
+    in property <string> badge;
+    in property <bool> selected;
+    // Shows a × on hover in place of the badge.
+    in property <bool> removable;
+    callback clicked();
+    callback remove();
+    height: subtitle == "" ? 32px : 44px;
+    border-radius: 9px;
+    property <bool> hot: ta.has-hover || remove-btn.hovered;
+    background: selected ? Theme.accent.with-alpha(Theme.dark ? 0.28 : 0.2) : hot ? Theme.hover : transparent;
+    animate background { duration: 160ms; }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        Icon {
+            icon: root.icon;
+            tint: root.selected ? Theme.accent : Theme.fg.with-alpha(0.8);
+            width: 18px;
+            height: 18px;
+            y: (parent.height - self.height) / 2;
+        }
+        VerticalLayout {
+            alignment: center;
+            Text {
+                text: root.label;
+                color: Theme.fg;
+                font-size: 13.5px;
+                font-weight: root.selected ? 600 : 500;
+                overflow: elide;
+            }
+            if root.subtitle != "": Text {
+                text: root.subtitle;
+                color: Theme.muted;
+                font-size: 11px;
+                overflow: elide;
+            }
+        }
+        if root.badge != "" && !(root.removable && root.hot): Text {
+            text: root.badge;
+            color: Theme.muted;
+            font-size: 11px;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    // Above the row's touch area so it gets its own clicks.
+    remove-btn := IconButton {
+        visible: root.removable;
+        x: root.width - self.width - 4px;
+        y: (root.height - self.height) / 2;
+        icon: Icons.close;
+        tint: self.hovered ? Theme.danger : Theme.muted.with-alpha(root.hot ? 1 : 0);
+        size: 24px;
+        icon-size: 11px;
+        clicked => { root.remove(); }
+    }
+}
+
+component QueueRow inherits Rectangle {
+    in property <TrackRow> track;
+    in property <int> number;
+    in property <bool> current;
+    callback clicked();
+    callback action(string); // "next", "folder", "trash"
+    height: 50px;
+    border-radius: 10px;
+    property <bool> hot: ta.has-hover || trash-btn.hovered;
+    background: current ? Theme.accent.with-alpha(Theme.dark ? 0.24 : 0.16) : hot ? Theme.hover : transparent;
+    animate background { duration: 160ms; }
+    ContextMenuArea {
+        Menu {
+            MenuItem {
+                title: "Play Next";
+                activated => { root.action("next"); }
+            }
+            MenuItem {
+                title: "Show in Folder";
+                activated => { root.action("folder"); }
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: "Move to Trash…";
+                activated => { root.action("trash"); }
+            }
+        }
+        // Under the buttons, so the heart and trash still get their clicks.
+        ta := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 12px;
+            spacing: 10px;
+            Rectangle {
+                width: 22px;
+                if root.current: Icon {
+                    icon: Icons.speaker;
+                    tint: Theme.accent;
+                    width: 16px;
+                    height: 16px;
+                }
+                if !root.current: Text {
+                    text: root.number;
+                    color: Theme.muted;
+                    font-size: 11.5px;
+                }
+            }
+            // Clipped so long right-to-left titles can't spill outside the row.
+            // Zero preferred width: the column's size comes from the row, not the title.
+            Rectangle {
+                clip: true;
+                preferred-width: 0px;
+                min-width: 0px;
+                horizontal-stretch: 1;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 1px;
+                    Text {
+                        text: root.track.title;
+                        color: Theme.fg;
+                        font-size: 13.5px;
+                        font-weight: root.current ? 600 : 500;
+                        horizontal-alignment: left;
+                        overflow: elide;
+                    }
+                    if root.track.artist != "": Text {
+                        text: root.track.artist;
+                        color: Theme.muted;
+                        font-size: 12px;
+                        horizontal-alignment: left;
+                        overflow: elide;
+                    }
+                }
+            }
+            Text {
+                text: root.track.duration;
+                color: Theme.muted;
+                font-size: 11.5px;
+                width: 44px;
+                vertical-alignment: center;
+                horizontal-alignment: right;
+            }
+            trash-btn := IconButton {
+                icon: Icons.trash;
+                tint: Theme.danger.with-alpha(root.hot ? 0.85 : 0);
+                size: 26px;
+                icon-size: 14px;
+                y: (parent.height - self.height) / 2;
+                clicked => { root.action("trash"); }
+            }
+        }
+    }
+}
+
+// One song in a library list.
+component SongRow inherits Rectangle {
+    in property <LibRow> song;
+    in property <int> number;
+    in property <bool> wide;
+    callback clicked();
+    callback heart();
+    callback action(string); // "next", "folder", "trash"
+    height: 48px;
+    border-radius: 10px;
+    property <bool> hot: ta.has-hover || trash-btn.hovered || heart-btn.hovered;
+    background: song.current ? Theme.accent.with-alpha(Theme.dark ? 0.22 : 0.15) : hot ? Theme.hover : transparent;
+    animate background { duration: 140ms; }
+    ContextMenuArea {
+        Menu {
+            MenuItem {
+                title: "Play Next";
+                activated => { root.action("next"); }
+            }
+            MenuItem {
+                title: "Show in Folder";
+                activated => { root.action("folder"); }
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: "Move to Trash…";
+                activated => { root.action("trash"); }
+            }
+        }
+        ta := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 6px;
+            spacing: 12px;
+            Rectangle {
+                width: 26px;
+                if root.song.current: Icon {
+                    icon: Icons.speaker;
+                    tint: Theme.accent;
+                    width: 16px;
+                    height: 16px;
+                }
+                if !root.song.current: Text {
+                    text: root.number;
+                    color: Theme.muted;
+                    font-size: 11.5px;
+                }
+            }
+            Rectangle {
+                clip: true;
+                preferred-width: 0px;
+                min-width: 0px;
+                horizontal-stretch: 3;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 1px;
+                    Text {
+                        text: root.song.title;
+                        color: Theme.fg;
+                        font-size: 13.5px;
+                        font-weight: root.song.current ? 600 : 500;
+                        horizontal-alignment: left;
+                        overflow: elide;
+                    }
+                    if root.song.artist != "": Text {
+                        text: root.song.artist;
+                        color: Theme.muted;
+                        font-size: 12px;
+                        horizontal-alignment: left;
+                        overflow: elide;
+                    }
+                }
+            }
+            if root.wide: Rectangle {
+                clip: true;
+                preferred-width: 0px;
+                min-width: 0px;
+                horizontal-stretch: 2;
+                Text {
+                    width: 100%;
+                    text: root.song.album;
+                    color: Theme.muted;
+                    font-size: 12.5px;
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+            Text {
+                text: root.song.duration;
+                color: Theme.muted;
+                font-size: 12px;
+                width: 52px;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+            trash-btn := IconButton {
+                icon: Icons.trash;
+                tint: Theme.danger.with-alpha(root.hot ? 0.85 : 0);
+                size: 30px;
+                icon-size: 15px;
+                y: (parent.height - self.height) / 2;
+                clicked => { root.action("trash"); }
+            }
+            heart-btn := IconButton {
+                icon: Icons.heart;
+                solid: root.song.favorite;
+                tint: root.song.favorite ? Theme.accent : Theme.muted.with-alpha(root.hot ? 0.9 : 0.35);
+                size: 30px;
+                icon-size: 16px;
+                y: (parent.height - self.height) / 2;
+                clicked => { root.heart(); }
+            }
+        }
+    }
+}
+
+component AlbumTile inherits VerticalLayout {
+    in property <AlbumCell> album;
+    callback clicked();
+    width: 168px;
+    spacing: 6px;
+    Rectangle {
+        width: 168px;
+        height: 168px;
+        border-radius: 12px;
+        // No coloured fill under a cover: it showed through the rounded corners' edges.
+        background: root.album.has-cover ? transparent : @linear-gradient(180deg, root.album.tint.brighter(0.3) 0%, root.album.tint.darker(0.35) 100%);
+        drop-shadow-blur: tile-ta.has-hover ? 26px : 14px;
+        drop-shadow-offset-y: tile-ta.has-hover ? 10px : 5px;
+        drop-shadow-color: #000000.with-alpha(Theme.dark ? 0.45 : 0.2);
+        animate drop-shadow-blur, drop-shadow-offset-y { duration: 200ms; }
+        if root.album.has-cover: Rectangle {
+            border-radius: 12px;
+            clip: true;
+            Image {
+                width: 100%;
+                height: 100%;
+                source: root.album.cover;
+                image-fit: cover;
+            }
+        }
+        if !root.album.has-cover: Icon {
+            icon: Icons.note;
+            tint: #ffffff.with-alpha(0.85);
+            width: 44px;
+            height: 44px;
+        }
+        tile-ta := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+    Rectangle {
+        height: 18px;
+        clip: true;
+        Text {
+            width: 100%;
+            text: root.album.name;
+            color: Theme.fg;
+            font-size: 13px;
+            font-weight: 600;
+            horizontal-alignment: left;
+            overflow: elide;
+        }
+    }
+    Rectangle {
+        height: 16px;
+        clip: true;
+        Text {
+            width: 100%;
+            text: root.album.artist;
+            color: Theme.muted;
+            font-size: 12px;
+            horizontal-alignment: left;
+            overflow: elide;
+        }
+    }
+}
+
+// Lyrics, Apple Music style: the line being sung is bright, the page glides along.
+component LyricsPanel inherits Rectangle {
+    // Drawn over the artwork in narrow windows, so it needs to be solid there.
+    in property <bool> solid;
+    in property <[LyricLine]> lines;
+    in property <bool> synced;
+    in property <int> current: -1;
+    in property <string> status;
+    in property <string> source;
+    callback seek(int);
+    callback close();
+    property <length> line-h: 68px;
+    border-radius: 16px;
+    background: root.solid ? Theme.sheet : Theme.panel;
+    border-width: 1px;
+    border-color: Theme.hairline;
+    clip: true;
+    if root.lines.length == 0: VerticalLayout {
+        alignment: center;
+        padding: 30px;
+        spacing: 10px;
+        Icon {
+            icon: Icons.quote;
+            tint: Theme.muted;
+            width: 28px;
+            height: 28px;
+            x: (parent.width - self.width) / 2;
+        }
+        Text {
+            text: root.status;
+            color: Theme.muted;
+            font-size: 14px;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+    if root.synced && root.lines.length > 0: Rectangle {
+        y: 16px;
+        height: parent.height - 40px;
+        clip: true;
+        VerticalLayout {
+            y: parent.height * 0.34 - Math.max(0, root.current) * root.line-h;
+            animate y { duration: 480ms; easing: cubic-bezier(0.22, 0.9, 0.3, 1); }
+            for l[i] in root.lines: Rectangle {
+                height: root.line-h;
+                Text {
+                    x: 22px;
+                    width: parent.width - 44px;
+                    text: l.text == "" ? "♪" : l.text;
+                    wrap: word-wrap;
+                    overflow: elide;
+                    font-size: i == root.current ? 21px : 19px;
+                    font-weight: 700;
+                    color: i == root.current ? Theme.fg : Theme.fg.with-alpha(i < root.current ? 0.25 : 0.38);
+                    vertical-alignment: center;
+                    horizontal-alignment: left;
+                    animate color { duration: 300ms; }
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.seek(i); }
+                }
+            }
+        }
+    }
+    if !root.synced && root.lines.length > 0: ListView {
+        y: 12px;
+        height: parent.height - 36px;
+        for l in root.lines: Rectangle {
+            height: plain.preferred-height + 6px;
+            plain := Text {
+                x: 22px;
+                width: parent.width - 44px;
+                text: l.text;
+                wrap: word-wrap;
+                font-size: 16px;
+                font-weight: 600;
+                color: Theme.fg.with-alpha(0.85);
+                horizontal-alignment: left;
+            }
+        }
+    }
+    if root.source != "": Text {
+        x: parent.width - self.width - 14px;
+        y: parent.height - 22px;
+        text: root.source;
+        color: Theme.muted;
+        font-size: 10.5px;
+    }
+}
+
+// The list inside the subtitle / audio menus.
+component TrackMenu inherits Rectangle {
+    in property <string> heading;
+    in property <[TrackOption]> options;
+    callback pick(string);
+    border-radius: 14px;
+    background: #1c1a22.with-alpha(0.96);
+    border-width: 1px;
+    border-color: #ffffff.with-alpha(0.12);
+    drop-shadow-blur: 30px;
+    drop-shadow-color: #00000088;
+    VerticalLayout {
+        padding: 6px;
+        spacing: 1px;
+        Text {
+            text: root.heading;
+            color: #ffffff.with-alpha(0.55);
+            font-size: 11px;
+            font-weight: 600;
+            height: 26px;
+            vertical-alignment: center;
+            x: 10px;
+        }
+        for o in root.options: Rectangle {
+            height: 32px;
+            border-radius: 8px;
+            background: ta.has-hover ? #ffffff.with-alpha(0.1) : transparent;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 10px;
+                spacing: 8px;
+                Rectangle {
+                    width: 16px;
+                    if o.selected: Icon {
+                        icon: Icons.check;
+                        tint: Theme.accent;
+                        width: 16px;
+                        height: 16px;
+                    }
+                }
+                Text {
+                    text: o.label;
+                    color: #ffffff;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+            ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.pick(o.id); }
+            }
+        }
+    }
+}
+
+// Dims the window and shows a card in the middle, with a soft pop-in.
+component Sheet inherits Rectangle {
+    in property <length> card-width: 400px;
+    callback dismiss();
+    property <float> appear: 0;
+    init => { self.appear = 1; }
+    background: #000000.with-alpha(0.28 * appear);
+    TouchArea {
+        clicked => { root.dismiss(); }
+    }
+    card := GlassCard {
+        width: root.card-width;
+        height: content.preferred-height;
+        y: (root.height - self.height) / 2 + (1 - root.appear) * 14px;
+        opacity: root.appear;
+        // Swallow clicks so they don't close the sheet.
+        TouchArea { }
+        content := VerticalLayout {
+            padding: 24px;
+            spacing: 18px;
+            @children
+        }
+    }
+    animate appear { duration: 280ms; easing: cubic-bezier(0.2, 1.2, 0.4, 1); }
+}
+
+component SettingRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> hint;
+    spacing: 12px;
+    VerticalLayout {
+        alignment: center;
+        Text {
+            text: root.label;
+            color: Theme.fg;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        if root.hint != "": Text {
+            text: root.hint;
+            color: Theme.muted;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+    }
+    @children
+}
+
+// The menu-bar / tray icon.
+export component NavaTray inherits SystemTrayIcon {
+    in property <string> now-playing: "Nothing playing";
+    in property <bool> playing;
+    in property <bool> has-track;
+    in property <bool> mini;
+    callback play-pause();
+    callback next();
+    callback prev();
+    callback toggle-mini();
+    callback show-window();
+    callback quit();
+    icon: @image-url("icons/nava-64.png");
+    tooltip: root.now-playing;
+    title: "Nava";
+    clicked => { root.show-window(); }
+    Menu {
+        MenuItem {
+            title: root.now-playing;
+            enabled: false;
+        }
+        MenuSeparator { }
+        MenuItem {
+            title: root.playing ? "Pause" : "Play";
+            enabled: root.has-track;
+            activated => { root.play-pause(); }
+        }
+        MenuItem {
+            title: "Next";
+            enabled: root.has-track;
+            activated => { root.next(); }
+        }
+        MenuItem {
+            title: "Previous";
+            enabled: root.has-track;
+            activated => { root.prev(); }
+        }
+        MenuSeparator { }
+        MenuItem {
+            title: root.mini ? "Full Window" : "Mini Player";
+            activated => { root.toggle-mini(); }
+        }
+        MenuItem {
+            title: "Show Nava";
+            activated => { root.show-window(); }
+        }
+        MenuSeparator { }
+        MenuItem {
+            title: "Quit Nava";
+            activated => { root.quit(); }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    icon: @image-url("icons/nava-256.png");
+    in property <string> window-title: "Nava";
+    title: window-title;
+    no-frame: true;
+    background: transparent;
+    resize-border-width: mini && !video-mode ? 0px : 6px;
+    min-width: mini ? (video-mode ? 280px : 360px) : 820px;
+    min-height: mini ? (video-mode ? 158px : 84px) : 560px;
+    max-height: mini && !video-mode ? 84px : 100000px;
+    always-on-top: mini;
+    preferred-width: 1140px;
+    preferred-height: 730px;
+    default-font-family: "Inter";
+    default-font-size: 13px;
+
+    // Artwork, and the colours of its four corners for the window's glow.
+    in property <image> artwork;
+    in property <image> artwork-small;
+    in property <color> glow-1: #3a2a4a;
+    in property <color> glow-2: #2a3050;
+    in property <color> glow-3: #4a2a3a;
+    in property <color> glow-4: #30284a;
+    property <color> g1: glow-1;
+    property <color> g2: glow-2;
+    property <color> g3: glow-3;
+    property <color> g4: glow-4;
+    animate g1, g2, g3, g4 { duration: 900ms; easing: ease-in-out; }
+    in property <bool> artwork-generated;
+    in property <color> accent: #e0587b;
+    in property <float> mood-lum: 0.4;
+
+    // Appearance
+    in-out property <float> glass: 0.8;
+    in-out property <int> theme-mode: 0; // 0 system, 1 light, 2 dark
+    property <bool> system-dark: Palette.color-scheme == ColorScheme.dark;
+
+    // Now playing
+    in property <string> track-title;
+    in property <string> track-artist;
+    in property <string> track-album;
+    in property <float> position;
+    in property <float> duration;
+    in property <bool> playing;
+    in property <float> volume: 80;
+    in property <bool> shuffle;
+    in property <int> repeat-mode; // 0 off, 1 all, 2 one
+    in property <string> resume-note;
+
+    // Queue and sessions
+    in property <[TrackRow]> queue;
+    in property <int> current-index: -1;
+    in property <[SessionRow]> sessions;
+    in property <string> session;
+    property <bool> naming-session;
+    // Library folders, shown in Settings.
+    in property <[string]> library-folders;
+
+    // Open-folder sheet
+    in-out property <bool> show-open-sheet;
+    in property <string> sheet-folder;
+    in property <string> sheet-path;
+    in property <int> sheet-found;
+    in-out property <int> sheet-mode: 0; // 0 all, 1 some
+    in-out property <int> sheet-limit: 20;
+    in-out property <int> sheet-pick: 0; // 0 first, 1 random, 2 newest
+    in-out property <bool> sheet-recursive: true;
+
+    in-out property <bool> show-settings;
+    in-out property <bool> show-equalizer;
+    in-out property <bool> show-link-sheet;
+    in-out property <bool> show-delete-sheet;
+    in property <string> delete-title;
+    in property <string> delete-path;
+    in property <bool> has-ytdlp: true;
+    in property <bool> eq-on;
+    in property <bool> eq-auto;
+    in property <string> eq-auto-label;
+    in property <float> eq-preamp;
+    in property <[float]> eq-gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    in property <string> eq-preset: "Flat";
+    in property <[string]> eq-presets;
+    in property <[string]> eq-custom;
+    in property <string> eq-curve;
+    in property <string> eq-fill;
+    in-out property <bool> pause-on-lock: true;
+
+    // Sleep timer, speed, A-B loop, bookmarks
+    in property <string> sleep-label;
+    in property <[TrackOption]> sleep-options;
+    in property <float> speed: 1;
+    in property <[TrackOption]> speed-options;
+    in property <float> ab-a: -1;
+    in property <float> ab-b: -1;
+    in property <[Bookmark]> bookmarks;
+    in property <[LyricLine]> lyrics;
+    in property <bool> lyrics-synced;
+    in property <int> lyrics-index: -1;
+    in property <string> lyrics-status: "Looking for lyrics…";
+    in property <string> lyrics-source;
+    in-out property <bool> show-lyrics;
+    in-out property <bool> online-lyrics: true;
+    in property <[float]> bookmark-positions; // 0..1 along the track
+    in-out property <bool> show-notes;
+
+    // Library
+    in-out property <string> view: "now"; // now, songs, albums, artists, videos, favorites, recent, album, artist, search
+    in property <string> view-title;
+    in property <string> view-subtitle;
+    in property <image> view-cover;
+    in property <bool> view-has-cover;
+    in property <[LibRow]> lib-songs;
+    in property <[AlbumRow]> lib-album-rows;
+    in property <[ArtistRow]> lib-artists;
+    in property <bool> library-empty: true;
+    in property <string> scan-status;
+    in property <bool> current-favorite;
+    in-out property <string> search-text;
+    // Where the album and artist lists were scrolled, to come back to the same spot.
+    in-out property <length> albums-scroll;
+    in-out property <length> artists-scroll;
+    out property <int> album-columns: Math.max(2, Math.floor((root.width - 236px - 56px + 20px) / 188px));
+    property <string> view-kind: view == "albums" ? "albums" : view == "artists" ? "artists" : "songs";
+
+    // Mini player: a small always-on-top bar for coding.
+    in property <bool> mini;
+
+    // Video
+    in property <bool> video-mode;
+    // Browsing the library while a video keeps playing.
+    in-out property <bool> video-browse;
+    // The video fills the window (or the picture-in-picture window).
+    property <bool> show-video: video-mode && (mini || !video-browse);
+    in property <image> video-frame;
+    in property <bool> controls-visible: true;
+    in property <[TrackOption]> sub-tracks;
+    in property <[TrackOption]> audio-tracks;
+    property <bool> hud-shown: controls-visible || !playing;
+    property <bool> show-video-queue;
+
+    callback play-pause();
+    callback next();
+    callback prev();
+    callback seek(float);
+    callback set-volume(float);
+    callback toggle-shuffle();
+    callback cycle-repeat();
+    callback play-index(int);
+    callback switch-session(string);
+    callback create-session(string);
+    callback session-action(string, string); // name, "clear" | "delete"
+    callback clear-queue();
+    callback remove-library-folder(int);
+    callback open-folder();
+    callback sheet-rescan();
+    callback sheet-confirm();
+    callback glass-changed(float);
+    callback theme-changed(int);
+    callback close-window();
+    callback toggle-mini();
+    callback set-sleep(string);
+    callback set-speed(string);
+    callback ab-loop();
+    callback add-bookmark(string);
+    callback seek-bookmark(int);
+    callback delete-bookmark(int);
+    callback export-notes();
+    callback seek-lyric(int);
+    callback lyrics-toggled(bool);
+    callback online-lyrics-changed(bool);
+    callback eq-band(int, float);
+    callback eq-toggle(bool);
+    callback eq-preset-chosen(string);
+    callback eq-auto-changed(bool);
+    callback eq-preamp-changed(float);
+    callback eq-save(string);
+    callback eq-delete(int);
+    callback pause-on-lock-changed(bool);
+    callback show-view(string);
+    callback search-changed(string);
+    callback play-from-list(int);
+    callback play-list(bool); // true = shuffled
+    callback open-album(int, int); // row, column
+    callback open-artist(int);
+    callback heart-row(int);
+    callback heart-current();
+    callback add-library-folder();
+    callback album-columns-changed(int);
+    callback go-back();
+    callback row-action(string, int, string); // where, row, what
+    callback confirm-delete();
+    callback window-resized();
+    callback open-link(string, bool);
+    callback video-activity();
+    callback toggle-fullscreen();
+    callback select-sub(string);
+    callback select-audio(string);
+
+    // Video is always shown on dark glass, like QuickTime.
+    property <bool> dark: show-video || (theme-mode == 0 ? system-dark : theme-mode == 2);
+    property <color> accent-smooth: accent;
+    animate accent-smooth { duration: 700ms; easing: ease-in-out; }
+    changed accent-smooth => { Theme.accent = self.accent-smooth; }
+    changed dark => { Theme.dark = self.dark; }
+    changed glass => { Theme.glass = self.glass; }
+    changed mood-lum => { Theme.mood-lum = self.mood-lum; }
+    changed album-columns => { root.album-columns-changed(self.album-columns); }
+    // The window's shape follows its size (rounded corners on X11).
+    changed width => { root.window-resized(); }
+    changed height => { root.window-resized(); }
+    changed mini => { root.window-resized(); }
+    init => {
+        Theme.dark = self.dark;
+        Theme.glass = self.glass;
+        Theme.accent = self.accent;
+        Theme.mood-lum = self.mood-lum;
+        keys.focus();
+    }
+
+    property <bool> has-track: current-index >= 0;
+    property <bool> wide: self.width > 960px;
+    property <length> radius: self.mini ? 16px : self.maximized || self.full-screen ? 0px : 12px;
+
+    frame := Rectangle {
+        border-radius: root.radius;
+        clip: true;
+        background: Theme.base;
+
+        // The colourful layer the glass sits on: the artwork's corner colours,
+        // blended. Gradients keep the window's rounded corners (an image wouldn't).
+        Rectangle {
+            visible: !root.show-video;
+            border-radius: root.radius;
+            opacity: 0.3 + Theme.glass * 0.7;
+            // Only straight (0° / 90°) gradients: angled ones draw a seam in the software renderer.
+            background: @linear-gradient(90deg, root.g1 0%, root.g2 100%);
+        }
+        Rectangle {
+            visible: !root.show-video;
+            border-radius: root.radius;
+            opacity: 0.3 + Theme.glass * 0.7;
+            // Bottom-left colour rising from below. (Angled gradients with
+            // transparency draw a seam in the software renderer; straight ones don't.)
+            background: @linear-gradient(0deg, root.g3.mix(root.g4, 0.5).with-alpha(0.9) 0%, root.g3.mix(root.g4, 0.5).with-alpha(0) 65%);
+        }
+        Rectangle {
+            visible: !root.show-video;
+            border-radius: root.radius;
+            opacity: (0.3 + Theme.glass * 0.7) * 0.7;
+            background: @radial-gradient(circle, root.accent-smooth.with-alpha(0.45) 0%, root.accent-smooth.with-alpha(0) 60%);
+        }
+        Rectangle {
+            visible: !root.show-video;
+            border-radius: root.radius;
+            background: Theme.base.with-alpha(Theme.veil);
+            animate background { duration: 500ms; }
+        }
+
+        keys := FocusScope {
+            key-pressed(e) => {
+                if e.modifiers.control && (e.text == "o" || e.text == "O") { root.open-folder(); return accept; }
+                if e.modifiers.control && e.text == "," { root.show-settings = true; return accept; }
+                if e.modifiers.control && (e.text == "l" || e.text == "L") { root.show-link-sheet = true; return accept; }
+                if e.modifiers.control && (e.text == "m" || e.text == "M") { root.toggle-mini(); return accept; }
+                if e.text == Key.Escape && root.full-screen { root.toggle-fullscreen(); return accept; }
+                if (e.text == Key.Escape || e.text == Key.Backspace) && (root.view == "album" || root.view == "artist")
+                    && !root.show-settings && !root.show-open-sheet && !root.show-equalizer {
+                    root.go-back();
+                    return accept;
+                }
+                if e.text == Key.Escape { root.show-settings = false; root.show-open-sheet = false; root.show-equalizer = false; root.show-link-sheet = false; root.show-delete-sheet = false; return accept; }
+                if root.show-delete-sheet && e.text == Key.Return { root.confirm-delete(); return accept; }
+                if root.show-open-sheet || root.show-settings || root.show-equalizer || root.show-link-sheet || root.show-delete-sheet { return reject; }
+                if e.text == Key.Delete && root.has-track { root.row-action("queue", root.current-index, "trash"); return accept; }
+                if root.show-video && (e.text == "f" || e.text == "F") { root.toggle-fullscreen(); return accept; }
+                if root.video-mode && (e.text == "v" || e.text == "V") { root.video-browse = !root.video-browse; return accept; }
+                if root.video-mode && e.text == Key.Escape && root.full-screen { root.toggle-fullscreen(); return accept; }
+                if e.text == " " { root.play-pause(); return accept; }
+                if e.text == Key.RightArrow { root.seek(Math.min(root.position + 5, root.duration)); return accept; }
+                if e.text == Key.LeftArrow { root.seek(Math.max(root.position - 5, 0)); return accept; }
+                if e.text == Key.UpArrow { root.set-volume(Math.min(root.volume + 5, 100)); return accept; }
+                if e.text == Key.DownArrow { root.set-volume(Math.max(root.volume - 5, 0)); return accept; }
+                if e.text == "n" { root.next(); return accept; }
+                if e.text == "l" || e.text == "L" { root.heart-current(); return accept; }
+                if e.text == "a" || e.text == "A" { root.ab-loop(); return accept; }
+                if (e.text == "e" || e.text == "E") && !root.mini { root.show-equalizer = true; return accept; }
+                if (e.text == "y" || e.text == "Y") && root.has-track {
+                    root.show-lyrics = !root.show-lyrics;
+                    root.lyrics-toggled(root.show-lyrics);
+                    return accept;
+                }
+                if root.show-video && !root.mini && (e.text == "b" || e.text == "B") {
+                    root.show-notes = true;
+                    root.show-video-queue = false;
+                    return accept;
+                }
+                if e.text == "p" { root.prev(); return accept; }
+                reject
+            }
+
+            if !root.mini && !root.show-video: HorizontalLayout {
+                // ---------- Sidebar ----------
+                sidebar := Rectangle {
+                    width: 236px;
+                    background: Theme.panel;
+                    Rectangle {
+                        x: parent.width - 1px;
+                        width: 1px;
+                        background: Theme.hairline;
+                    }
+                    WindowMoveArea {
+                        height: 52px;
+                        y: 0;
+                    }
+                    VerticalLayout {
+                        padding: 12px;
+                        padding-top: 0;
+                        spacing: 2px;
+                        Rectangle {
+                            height: 52px;
+                            TrafficLights {
+                                x: 8px;
+                                close => { root.close-window(); }
+                                minimize => { root.minimized = true; }
+                                zoom => { root.maximized = !root.maximized; }
+                            }
+                        }
+                        // Search
+                        Rectangle {
+                            height: 32px;
+                            border-radius: 9px;
+                            background: Theme.faint;
+                            border-width: search-input.has-focus ? 1.5px : 0px;
+                            border-color: Theme.accent.with-alpha(0.7);
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                spacing: 8px;
+                                Icon {
+                                    icon: Icons.search;
+                                    tint: Theme.muted;
+                                    width: 15px;
+                                    height: 15px;
+                                    y: (parent.height - self.height) / 2;
+                                }
+                                Rectangle {
+                                    search-input := TextInput {
+                                        width: 100%;
+                                        y: (parent.height - self.height) / 2;
+                                        text <=> root.search-text;
+                                        vertical-alignment: center;
+                                        color: Theme.fg;
+                                        font-size: 13px;
+                                        single-line: true;
+                                        selection-background-color: Theme.accent.with-alpha(0.35);
+                                        edited => { root.search-changed(self.text); }
+                                        key-pressed(e) => {
+                                            if e.text == Key.Escape {
+                                                self.text = "";
+                                                root.search-changed("");
+                                                keys.focus();
+                                                return accept;
+                                            }
+                                            reject
+                                        }
+                                    }
+                                    if root.search-text == "": Text {
+                                        x: 0;
+                                        text: "Search";
+                                        color: Theme.muted;
+                                        font-size: 13px;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                        Rectangle { height: 8px; }
+                        SidebarItem {
+                            icon: Icons.disc;
+                            label: "Now Playing";
+                            selected: root.view == "now";
+                            clicked => { root.show-view("now"); }
+                        }
+                        Rectangle { height: 8px; }
+                        SectionLabel {
+                            text: "LIBRARY";
+                            height: 24px;
+                            x: 10px;
+                        }
+                        for item in [
+                            { v: "songs", label: "Songs", icon: Icons.songs },
+                            { v: "albums", label: "Albums", icon: Icons.album },
+                            { v: "artists", label: "Artists", icon: Icons.person },
+                            { v: "videos", label: "Videos", icon: Icons.film },
+                            { v: "favorites", label: "Favorites", icon: Icons.heart },
+                            { v: "recent", label: "Recently Added", icon: Icons.clock },
+                        ]: SidebarItem {
+                            icon: item.icon;
+                            label: item.label;
+                            selected: root.view == item.v
+                                || (item.v == "albums" && root.view == "album")
+                                || (item.v == "artists" && root.view == "artist");
+                            clicked => { root.show-view(item.v); }
+                        }
+                        Rectangle { height: 8px; }
+                        HorizontalLayout {
+                            height: 24px;
+                            padding-left: 10px;
+                            padding-right: 4px;
+                            SectionLabel {
+                                text: "SESSIONS";
+                                vertical-alignment: center;
+                            }
+                            IconButton {
+                                icon: Icons.plus;
+                                tint: Theme.muted;
+                                size: 22px;
+                                icon-size: 13px;
+                                y: (parent.height - self.height) / 2;
+                                clicked => { root.naming-session = true; }
+                            }
+                        }
+                        // Sidebar scrolls the sessions if you make many.
+                        Flickable {
+                            vertical-stretch: 1;
+                            min-height: 32px;
+                            content-width: self.width;
+                            content-height: session-list.preferred-height;
+                            session-list := VerticalLayout {
+                                width: parent.width;
+                                alignment: start;
+                                spacing: 2px;
+                                for s in root.sessions: Rectangle {
+                                    height: 32px;
+                                    ContextMenuArea {
+                                        Menu {
+                                            MenuItem {
+                                                title: "Clear List";
+                                                activated => { root.session-action(s.name, "clear"); }
+                                            }
+                                            MenuItem {
+                                                title: "Delete Session";
+                                                enabled: s.custom;
+                                                activated => { root.session-action(s.name, "delete"); }
+                                            }
+                                        }
+                                        SidebarItem {
+                                            icon: s.icon;
+                                            label: s.name;
+                                            badge: s.subtitle;
+                                            removable: s.custom;
+                                            selected: s.name == root.session && root.view == "now";
+                                            clicked => { root.switch-session(s.name); root.show-view("now"); }
+                                            remove => { root.session-action(s.name, "delete"); }
+                                        }
+                                    }
+                                }
+                                // Naming a new session: Enter makes it, Esc gives up.
+                                if root.naming-session: Rectangle {
+                                    height: 32px;
+                                    border-radius: 9px;
+                                    background: Theme.faint;
+                                    border-width: 1.5px;
+                                    border-color: Theme.accent.with-alpha(0.7);
+                                    HorizontalLayout {
+                                        padding-left: 10px;
+                                        padding-right: 10px;
+                                        spacing: 10px;
+                                        Icon {
+                                            icon: Icons.list;
+                                            tint: Theme.accent;
+                                            width: 18px;
+                                            height: 18px;
+                                            y: (parent.height - self.height) / 2;
+                                        }
+                                        Rectangle {
+                                            session-name := TextInput {
+                                                width: 100%;
+                                                vertical-alignment: center;
+                                                color: Theme.fg;
+                                                font-size: 13.5px;
+                                                single-line: true;
+                                                selection-background-color: Theme.accent.with-alpha(0.35);
+                                                init => { self.focus(); }
+                                                accepted => {
+                                                    if self.text != "" { root.create-session(self.text); }
+                                                    root.naming-session = false;
+                                                    keys.focus();
+                                                }
+                                                key-pressed(e) => {
+                                                    if e.text == Key.Escape {
+                                                        root.naming-session = false;
+                                                        keys.focus();
+                                                        return accept;
+                                                    }
+                                                    reject
+                                                }
+                                            }
+                                            if session-name.text == "": Text {
+                                                x: 0;
+                                                text: "Session name";
+                                                color: Theme.muted;
+                                                font-size: 13.5px;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 2px;
+                            padding-bottom: 4px;
+                            IconButton {
+                                icon: Icons.plus-circle;
+                                tint: Theme.muted;
+                                size: 32px;
+                                icon-size: 17px;
+                                clicked => { root.add-library-folder(); }
+                            }
+                            IconButton {
+                                icon: Icons.folder;
+                                tint: Theme.muted;
+                                size: 32px;
+                                icon-size: 17px;
+                                clicked => { root.open-folder(); }
+                            }
+                            IconButton {
+                                icon: Icons.link;
+                                tint: Theme.muted;
+                                size: 32px;
+                                icon-size: 17px;
+                                clicked => { root.show-link-sheet = true; }
+                            }
+                            IconButton {
+                                icon: Icons.eq;
+                                tint: root.eq-on ? Theme.accent : Theme.muted;
+                                size: 32px;
+                                icon-size: 17px;
+                                clicked => { root.show-equalizer = true; }
+                            }
+                            IconButton {
+                                icon: Icons.sliders;
+                                tint: Theme.muted;
+                                size: 32px;
+                                icon-size: 17px;
+                                clicked => { root.show-settings = true; }
+                            }
+                            Rectangle { }
+                        }
+                    }
+                }
+
+                // ---------- Main area ----------
+                Rectangle {
+                    WindowMoveArea {
+                        height: 52px;
+                        y: 0;
+                    }
+                    IconButton {
+                        x: parent.width - 46px;
+                        y: 11px;
+                        icon: Icons.shrink;
+                        size: 30px;
+                        icon-size: 16px;
+                        tint: Theme.muted;
+                        clicked => { root.toggle-mini(); }
+                    }
+
+                    // ---------- Library views ----------
+                    if root.view != "now": Rectangle {
+                        property <length> bar: root.has-track ? 86px : 0px;
+                        if root.library-empty: GlassCard {
+                            width: Math.min(460px, parent.width - 48px);
+                            height: lib-empty.preferred-height;
+                            lib-empty := VerticalLayout {
+                                padding: 34px;
+                                spacing: 14px;
+                                Rectangle {
+                                    height: 74px;
+                                    Rectangle {
+                                        width: 74px;
+                                        height: 74px;
+                                        border-radius: 22px;
+                                        background: @linear-gradient(180deg, Theme.accent.brighter(0.25) 0%, Theme.accent.darker(0.25) 100%);
+                                        drop-shadow-blur: 24px;
+                                        drop-shadow-offset-y: 10px;
+                                        drop-shadow-color: Theme.accent.with-alpha(0.45);
+                                        Icon {
+                                            icon: Icons.album;
+                                            tint: Theme.on-accent;
+                                            width: 34px;
+                                            height: 34px;
+                                        }
+                                    }
+                                }
+                                Text {
+                                    text: "Your library is empty";
+                                    color: Theme.fg;
+                                    font-size: 22px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: "Add the folders where you keep music and videos. Nava keeps them indexed for you.";
+                                    color: Theme.muted;
+                                    font-size: 14px;
+                                    horizontal-alignment: center;
+                                    wrap: word-wrap;
+                                }
+                                HorizontalLayout {
+                                    alignment: center;
+                                    padding-top: 6px;
+                                    PrimaryButton {
+                                        text: "Add Folder…";
+                                        icon: Icons.plus-circle;
+                                        clicked => { root.add-library-folder(); }
+                                    }
+                                }
+                                if root.scan-status != "": Text {
+                                    text: root.scan-status;
+                                    color: Theme.muted;
+                                    font-size: 12px;
+                                    horizontal-alignment: center;
+                                }
+                            }
+                        }
+                        if !root.library-empty: VerticalLayout {
+                            y: 52px;
+                            height: parent.height - 52px - parent.bar;
+                            padding-left: 28px;
+                            padding-right: 20px;
+                            padding-bottom: 6px;
+                            spacing: 16px;
+                            // Header
+                            HorizontalLayout {
+                                spacing: 20px;
+                                height: root.view-has-cover ? 140px : 72px;
+                                if root.view-has-cover: Rectangle {
+                                    width: 140px;
+                                    border-radius: 12px;
+                                    drop-shadow-blur: 26px;
+                                    drop-shadow-offset-y: 10px;
+                                    drop-shadow-color: #000000.with-alpha(Theme.dark ? 0.5 : 0.22);
+                                    Rectangle {
+                                        border-radius: 12px;
+                                        clip: true;
+                                        Image {
+                                            width: 100%;
+                                            height: 100%;
+                                            source: root.view-cover;
+                                            image-fit: cover;
+                                        }
+                                    }
+                                }
+                                VerticalLayout {
+                                    alignment: end;
+                                    spacing: 4px;
+                                    if root.view == "album" || root.view == "artist": HorizontalLayout {
+                                        Rectangle {
+                                            horizontal-stretch: 0;
+                                            width: back-label.preferred-width + 34px;
+                                            height: 26px;
+                                            border-radius: 13px;
+                                            background: back-ta.has-hover ? Theme.hover : Theme.faint;
+                                            HorizontalLayout {
+                                                padding-left: 8px;
+                                                padding-right: 12px;
+                                                spacing: 4px;
+                                                Icon {
+                                                    icon: "M14.5 6l-6 6 6 6";
+                                                    tint: Theme.fg;
+                                                    width: 14px;
+                                                    height: 14px;
+                                                    y: (parent.height - self.height) / 2;
+                                                }
+                                                back-label := Text {
+                                                    text: root.view == "album" ? "Albums" : "Artists";
+                                                    color: Theme.fg;
+                                                    font-size: 12.5px;
+                                                    font-weight: 500;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+                                            back-ta := TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => { root.go-back(); }
+                                            }
+                                        }
+                                        Rectangle { }
+                                    }
+                                    Rectangle {
+                                        height: 38px;
+                                        clip: true;
+                                        Text {
+                                            width: 100%;
+                                            text: root.view-title;
+                                            color: Theme.fg;
+                                            font-size: 28px;
+                                            font-weight: 700;
+                                            letter-spacing: -0.3px;
+                                            horizontal-alignment: left;
+                                            overflow: elide;
+                                        }
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 12px;
+                                        Text {
+                                            text: root.view-subtitle;
+                                            color: Theme.muted;
+                                            font-size: 13px;
+                                            vertical-alignment: center;
+                                        }
+                                        if root.view-kind == "songs" && root.lib-songs.length > 0: PrimaryButton {
+                                            text: "Play";
+                                            icon: Icons.play;
+                                            height: 32px;
+                                            min-width: 88px;
+                                            clicked => { root.play-list(false); }
+                                        }
+                                        if root.view-kind == "songs" && root.lib-songs.length > 1: GhostButton {
+                                            text: "Shuffle";
+                                            height: 32px;
+                                            min-width: 88px;
+                                            clicked => { root.play-list(true); }
+                                        }
+                                        Rectangle { }
+                                    }
+                                }
+                            }
+                            if root.view-kind == "songs" && root.lib-songs.length == 0: Text {
+                                text: root.view == "favorites" ? "Tap the heart on a song to keep it here." : root.view == "search" ? "Nothing matches that search." : "Nothing here yet.";
+                                color: Theme.muted;
+                                font-size: 14px;
+                            }
+                            if root.view-kind == "songs": ListView {
+                                for r[i] in root.lib-songs: SongRow {
+                                    song: r;
+                                    number: i + 1;
+                                    wide: root.width > 1040px;
+                                    clicked => { root.play-from-list(i); }
+                                    heart => { root.heart-row(i); }
+                                    action(a) => { root.row-action("list", i, a); }
+                                }
+                            }
+                            if root.view-kind == "albums": albums-list := ListView {
+                                init => { self.content-y = root.albums-scroll; }
+                                for row[ri] in root.lib-album-rows: HorizontalLayout {
+                                    spacing: 20px;
+                                    padding-bottom: 22px;
+                                    alignment: start;
+                                    for cell[ci] in row.cells: AlbumTile {
+                                        album: cell;
+                                        clicked => {
+                                            root.albums-scroll = albums-list.content-y;
+                                            root.open-album(ri, ci);
+                                        }
+                                    }
+                                }
+                            }
+                            if root.view-kind == "artists": artists-list := ListView {
+                                init => { self.content-y = root.artists-scroll; }
+                                for a[i] in root.lib-artists: Rectangle {
+                                    height: 56px;
+                                    border-radius: 10px;
+                                    background: artist-ta.has-hover ? Theme.hover : transparent;
+                                    HorizontalLayout {
+                                        padding-left: 8px;
+                                        padding-right: 12px;
+                                        spacing: 14px;
+                                        Rectangle {
+                                            width: 40px;
+                                            height: 40px;
+                                            y: (parent.height - self.height) / 2;
+                                            border-radius: 20px;
+                                            background: @linear-gradient(180deg, a.tint.brighter(0.3) 0%, a.tint.darker(0.3) 100%);
+                                            Icon {
+                                                icon: Icons.person;
+                                                tint: #ffffff.with-alpha(0.9);
+                                                width: 20px;
+                                                height: 20px;
+                                            }
+                                        }
+                                        Rectangle {
+                                            clip: true;
+                                            preferred-width: 0px;
+                                            min-width: 0px;
+                                            horizontal-stretch: 1;
+                                            Text {
+                                                width: 100%;
+                                                text: a.name;
+                                                color: Theme.fg;
+                                                font-size: 14px;
+                                                font-weight: 500;
+                                                horizontal-alignment: left;
+                                                vertical-alignment: center;
+                                                overflow: elide;
+                                            }
+                                        }
+                                        Text {
+                                            text: a.count;
+                                            color: Theme.muted;
+                                            font-size: 12px;
+                                            width: 80px;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: right;
+                                        }
+                                    }
+                                    artist-ta := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.artists-scroll = artists-list.content-y;
+                                            root.open-artist(i);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Player bar
+                        if root.has-track: Rectangle {
+                            x: 16px;
+                            y: parent.height - 78px;
+                            width: parent.width - 32px;
+                            height: 64px;
+                            border-radius: 16px;
+                            background: Theme.sheet;
+                            border-width: 1px;
+                            border-color: Theme.hairline;
+                            drop-shadow-blur: 30px;
+                            drop-shadow-offset-y: 8px;
+                            drop-shadow-color: #000000.with-alpha(Theme.dark ? 0.45 : 0.15);
+                            clip: true;
+                            HorizontalLayout {
+                                padding: 8px;
+                                padding-right: 14px;
+                                spacing: 12px;
+                                Rectangle {
+                                    width: 48px;
+                                    border-radius: 8px;
+                                    clip: true;
+                                    background: Theme.faint;
+                                    Image {
+                                        width: 100%;
+                                        height: 100%;
+                                        source: root.artwork-small;
+                                        image-fit: cover;
+                                    }
+                                    TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.show-view("now"); }
+                                    }
+                                }
+                                Rectangle {
+                                    clip: true;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 1px;
+                                        Text {
+                                            text: root.track-title;
+                                            color: Theme.fg;
+                                            font-size: 13.5px;
+                                            font-weight: 600;
+                                            horizontal-alignment: left;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: root.track-artist;
+                                            color: Theme.muted;
+                                            font-size: 12px;
+                                            horizontal-alignment: left;
+                                            overflow: elide;
+                                        }
+                                    }
+                                    TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.show-view("now"); }
+                                    }
+                                }
+                                HorizontalLayout {
+                                    spacing: 4px;
+                                    alignment: center;
+                                    IconButton {
+                                        icon: Icons.prev;
+                                        solid: true;
+                                        size: 34px;
+                                        icon-size: 18px;
+                                        y: (parent.height - self.height) / 2;
+                                        clicked => { root.prev(); }
+                                    }
+                                    Rectangle {
+                                        width: 38px;
+                                        height: 38px;
+                                        y: (parent.height - self.height) / 2;
+                                        border-radius: 19px;
+                                        background: bar-play.pressed ? Theme.fg.darker(0.15) : Theme.fg;
+                                        Icon {
+                                            icon: root.playing ? Icons.pause : Icons.play;
+                                            solid: true;
+                                            tint: Theme.base;
+                                            width: 17px;
+                                            height: 17px;
+                                        }
+                                        bar-play := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.play-pause(); }
+                                        }
+                                    }
+                                    IconButton {
+                                        icon: Icons.next;
+                                        solid: true;
+                                        size: 34px;
+                                        icon-size: 18px;
+                                        y: (parent.height - self.height) / 2;
+                                        clicked => { root.next(); }
+                                    }
+                                }
+                                HorizontalLayout {
+                                    alignment: end;
+                                    spacing: 8px;
+                                    Text {
+                                        text: Fmt.time(root.position) + " / " + Fmt.time(root.duration);
+                                        color: Theme.muted;
+                                        font-size: 11.5px;
+                                        vertical-alignment: center;
+                                    }
+                                    IconButton {
+                                        icon: Icons.heart;
+                                        solid: root.current-favorite;
+                                        tint: root.current-favorite ? Theme.accent : Theme.muted;
+                                        size: 30px;
+                                        icon-size: 16px;
+                                        y: (parent.height - self.height) / 2;
+                                        clicked => { root.heart-current(); }
+                                    }
+                                }
+                            }
+                            // Progress along the bottom edge.
+                            Rectangle {
+                                x: 0;
+                                y: parent.height - 3px;
+                                height: 3px;
+                                width: parent.width * (root.duration > 0 ? Math.clamp(root.position / root.duration, 0, 1) : 0);
+                                background: Theme.accent;
+                            }
+                        }
+                    }
+
+                    if root.view == "now": Rectangle {
+
+                        // Now playing
+                        now := Rectangle {
+                            x: 0;
+                            y: 52px;
+                            width: parent.width - (root.wide && root.has-track ? 334px : 0px);
+                            height: parent.height - 74px;
+                            property <length> art-base: Math.min(self.width * 0.62, self.height - 270px, 360px);
+
+                            if !root.has-track: GlassCard {
+                                width: Math.min(440px, parent.width - 48px);
+                                height: empty.preferred-height;
+                                empty := VerticalLayout {
+                                    padding: 34px;
+                                    spacing: 14px;
+                                    alignment: center;
+                                    Rectangle {
+                                        height: 74px;
+                                        Rectangle {
+                                            width: 74px;
+                                            height: 74px;
+                                            border-radius: 22px;
+                                            background: @linear-gradient(180deg, Theme.accent.brighter(0.25) 0%, Theme.accent.darker(0.25) 100%);
+                                            drop-shadow-blur: 24px;
+                                            drop-shadow-offset-y: 10px;
+                                            drop-shadow-color: Theme.accent.with-alpha(0.45);
+                                            Icon {
+                                                icon: Icons.note;
+                                                tint: Theme.on-accent;
+                                                width: 34px;
+                                                height: 34px;
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        text: "Let's play something";
+                                        color: Theme.fg;
+                                        font-size: 22px;
+                                        font-weight: 700;
+                                        horizontal-alignment: center;
+                                    }
+                                    Text {
+                                        text: "Pick a folder and play all of it, or just a handful.";
+                                        color: Theme.muted;
+                                        font-size: 14px;
+                                        horizontal-alignment: center;
+                                        wrap: word-wrap;
+                                    }
+                                    HorizontalLayout {
+                                        alignment: center;
+                                        padding-top: 6px;
+                                        PrimaryButton {
+                                            text: "Choose Folder…";
+                                            icon: Icons.folder;
+                                            clicked => { root.open-folder(); }
+                                        }
+                                    }
+                                    Text {
+                                        text: "Tip: run  nava --code  to pick up where you left off.";
+                                        color: Theme.muted;
+                                        font-size: 12px;
+                                        horizontal-alignment: center;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            if root.has-track: VerticalLayout {
+                                alignment: center;
+                                spacing: 0;
+                                padding-left: 32px;
+                                padding-right: 32px;
+
+                                // Artwork: full size while playing, gently shrinks when paused.
+                                Rectangle {
+                                    height: now.art-base + 8px;
+                                    art := Rectangle {
+                                        property <length> size: root.playing ? now.art-base : now.art-base * 0.86;
+                                        animate size { duration: 520ms; easing: cubic-bezier(0.3, 1.35, 0.5, 1); }
+                                        // A playing video shows here, 16:9, while you browse.
+                                        width: root.video-mode ? Math.min(self.size * 1.6, now.width - 64px) : self.size;
+                                        height: root.video-mode ? self.width * 9 / 16 : self.size;
+                                        border-radius: 14px;
+                                        background: root.video-mode ? #000000 : Theme.faint;
+                                        drop-shadow-blur: root.playing ? 46px : 26px;
+                                        drop-shadow-offset-y: root.playing ? 22px : 12px;
+                                        drop-shadow-color: #000000.with-alpha(Theme.dark ? 0.55 : 0.28);
+                                        animate drop-shadow-blur, drop-shadow-offset-y { duration: 520ms; }
+                                        Rectangle {
+                                            border-radius: 14px;
+                                            clip: true;
+                                            Image {
+                                                width: 100%;
+                                                height: 100%;
+                                                source: root.video-mode ? root.video-frame : root.artwork;
+                                                image-fit: root.video-mode ? contain : cover;
+                                            }
+                                        }
+                                        if root.video-mode: TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.video-browse = false; }
+                                        }
+                                        if root.artwork-generated && !root.video-mode: Icon {
+                                            icon: Icons.note;
+                                            tint: #ffffff.with-alpha(0.85);
+                                            width: parent.width * 0.26;
+                                            height: self.width;
+                                        }
+                                        // A thin highlight on the top edge, like light on glass.
+                                        Rectangle {
+                                            border-radius: 14px;
+                                            border-width: 1px;
+                                            border-color: #ffffff.with-alpha(0.14);
+                                        }
+                                    }
+                                }
+
+                                Rectangle { height: 26px; }
+
+                                if root.resume-note != "": HorizontalLayout {
+                                    alignment: center;
+                                    padding-bottom: 10px;
+                                    Rectangle {
+                                        height: 24px;
+                                        border-radius: 12px;
+                                        background: Theme.panel;
+                                        border-width: 1px;
+                                        border-color: Theme.hairline;
+                                        HorizontalLayout {
+                                            padding-left: 12px;
+                                            padding-right: 12px;
+                                            Text {
+                                                text: root.resume-note;
+                                                color: Theme.fg;
+                                                font-size: 11.5px;
+                                                font-weight: 500;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    height: 32px;
+                                    clip: true;
+                                    Text {
+                                    width: 100%;
+                                    text: root.track-title;
+                                    color: Theme.fg;
+                                    font-size: 22px;
+                                    font-weight: 700;
+                                    letter-spacing: -0.2px;
+                                    horizontal-alignment: center;
+                                    overflow: elide;
+                                    }
+                                }
+                                Rectangle {
+                                    height: 22px;
+                                    clip: true;
+                                    Text {
+                                    width: 100%;
+                                    text: root.track-album == "" ? root.track-artist : root.track-artist == "" ? root.track-album : root.track-artist + "  ·  " + root.track-album;
+                                    color: Theme.muted;
+                                    font-size: 14.5px;
+                                    horizontal-alignment: center;
+                                    overflow: elide;
+                                    }
+                                }
+
+                                Rectangle { height: 18px; }
+
+                                // Scrubber and times
+                                HorizontalLayout {
+                                    alignment: center;
+                                    VerticalLayout {
+                                        width: Math.min(now.width - 64px, 480px);
+                                        spacing: 2px;
+                                        scrub := NSlider {
+                                            value: root.duration > 0 ? root.position / root.duration : 0;
+                                            released(v) => { root.seek(v * root.duration); }
+                                            // The A-B loop, as a band over the track.
+                                            if root.ab-a >= 0 && root.duration > 0: Rectangle {
+                                                x: parent.width * root.ab-a / root.duration;
+                                                width: root.ab-b >= 0 ? parent.width * (root.ab-b - root.ab-a) / root.duration : 2px;
+                                                y: (parent.height - self.height) / 2;
+                                                height: 12px;
+                                                border-radius: 3px;
+                                                background: Theme.accent.with-alpha(0.35);
+                                            }
+                                        }
+                                        HorizontalLayout {
+                                            Text {
+                                                text: Fmt.time(scrub.shown * root.duration);
+                                                color: Theme.muted;
+                                                font-size: 11px;
+                                            }
+                                            Text {
+                                                text: "−" + Fmt.time(root.duration - scrub.shown * root.duration);
+                                                color: Theme.muted;
+                                                font-size: 11px;
+                                                horizontal-alignment: right;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Rectangle { height: 10px; }
+
+                                HorizontalLayout {
+                                    alignment: center;
+                                    spacing: 16px;
+                                    IconButton {
+                                        icon: Icons.shuffle;
+                                        active: root.shuffle;
+                                        y: (parent.height - self.height) / 2;
+                                        clicked => { root.toggle-shuffle(); }
+                                    }
+                                    IconButton {
+                                        icon: Icons.prev;
+                                        solid: true;
+                                        size: 44px;
+                                        icon-size: 26px;
+                                        y: (parent.height - self.height) / 2;
+                                        clicked => { root.prev(); }
+                                    }
+                                    PlayButton {
+                                        playing: root.playing;
+                                        clicked => { root.play-pause(); }
+                                    }
+                                    IconButton {
+                                        icon: Icons.next;
+                                        solid: true;
+                                        size: 44px;
+                                        icon-size: 26px;
+                                        y: (parent.height - self.height) / 2;
+                                        clicked => { root.next(); }
+                                    }
+                                    IconButton {
+                                        icon: Icons.repeat;
+                                        active: root.repeat-mode > 0;
+                                        badge: root.repeat-mode == 2 ? "1" : "";
+                                        y: (parent.height - self.height) / 2;
+                                        clicked => { root.cycle-repeat(); }
+                                    }
+                                }
+
+                                Rectangle { height: 14px; }
+
+                                HorizontalLayout {
+                                    alignment: center;
+                                    spacing: 6px;
+                                    Rectangle {
+                                        width: 46px;
+                                        height: 26px;
+                                        y: (parent.height - self.height) / 2;
+                                        border-radius: 13px;
+                                        background: root.speed != 1 ? Theme.accent.with-alpha(0.2) : np-speed-ta.has-hover ? Theme.hover : Theme.faint;
+                                        Text {
+                                            text: Math.round(root.speed * 100) / 100 + "×";
+                                            color: root.speed != 1 ? Theme.accent : Theme.muted;
+                                            font-size: 11.5px;
+                                            font-weight: 600;
+                                        }
+                                        np-speed-ta := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { np-speed-menu.show(); }
+                                        }
+                                        np-speed-menu := PopupWindow {
+                                            x: 0;
+                                            y: -self.height - 8px;
+                                            width: 150px;
+                                            height: 38px + root.speed-options.length * 33px;
+                                            TrackMenu {
+                                                heading: "SPEED";
+                                                options: root.speed-options;
+                                                pick(id) => { root.set-speed(id); }
+                                            }
+                                        }
+                                    }
+                                    Icon {
+                                        icon: Icons.volume-low;
+                                        tint: Theme.muted;
+                                        width: 16px;
+                                        height: 16px;
+                                        y: (parent.height - self.height) / 2;
+                                    }
+                                    NSlider {
+                                        // Shrinks before anything else so the row never spills over.
+                                        width: Math.max(60px, Math.min(180px, now.width - 290px));
+                                        y: (parent.height - self.height) / 2;
+                                        rest-thickness: 4px;
+                                        value: root.volume / 100;
+                                        moved(v) => { root.set-volume(v * 100); }
+                                        released(v) => { root.set-volume(v * 100); }
+                                    }
+                                    Icon {
+                                        icon: Icons.volume-high;
+                                        tint: Theme.muted;
+                                        width: 16px;
+                                        height: 16px;
+                                        y: (parent.height - self.height) / 2;
+                                    }
+                                    IconButton {
+                                        icon: Icons.heart;
+                                        solid: root.current-favorite;
+                                        tint: root.current-favorite ? Theme.accent : Theme.muted;
+                                        size: 30px;
+                                        icon-size: 16px;
+                                        y: (parent.height - self.height) / 2;
+                                        clicked => { root.heart-current(); }
+                                    }
+                                    IconButton {
+                                        icon: Icons.quote;
+                                        active: root.show-lyrics;
+                                        tint: root.show-lyrics ? Theme.accent : Theme.muted;
+                                        size: 30px;
+                                        icon-size: 16px;
+                                        y: (parent.height - self.height) / 2;
+                                        clicked => {
+                                            root.show-lyrics = !root.show-lyrics;
+                                            root.lyrics-toggled(root.show-lyrics);
+                                        }
+                                    }
+                                    np-moon := IconButton {
+                                        icon: Icons.moon;
+                                        active: root.sleep-label != "";
+                                        tint: root.sleep-label != "" ? Theme.accent : Theme.muted;
+                                        size: 30px;
+                                        icon-size: 16px;
+                                        y: (parent.height - self.height) / 2;
+                                        clicked => { np-sleep-menu.show(); }
+                                        np-sleep-menu := PopupWindow {
+                                            x: -170px;
+                                            y: -self.height - 8px;
+                                            width: 200px;
+                                            height: 38px + root.sleep-options.length * 33px;
+                                            TrackMenu {
+                                                heading: "SLEEP TIMER";
+                                                options: root.sleep-options;
+                                                pick(id) => { root.set-sleep(id); }
+                                            }
+                                        }
+                                    }
+                                }
+                                if root.sleep-label != "": Text {
+                                    text: "Sleep · " + root.sleep-label;
+                                    color: Theme.accent;
+                                    font-size: 11.5px;
+                                    font-weight: 500;
+                                    horizontal-alignment: center;
+                                }
+                            }
+                        }
+
+                        // Up next
+                        if root.has-track && root.show-lyrics: LyricsPanel {
+                            x: root.wide ? parent.width - 334px : 16px;
+                            y: 52px;
+                            width: root.wide ? 318px : parent.width - 32px;
+                            height: root.wide ? parent.height - 74px : parent.height - 230px;
+                            solid: !root.wide;
+                            lines: root.lyrics;
+                            synced: root.lyrics-synced;
+                            current: root.lyrics-index;
+                            status: root.lyrics-status;
+                            source: root.lyrics-source;
+                            seek(i) => { root.seek-lyric(i); }
+                        }
+                        if root.wide && root.has-track && !root.show-lyrics: Rectangle {
+                            x: parent.width - 334px;
+                            y: 52px;
+                            width: 318px;
+                            height: parent.height - 74px;
+                            border-radius: 16px;
+                            background: Theme.panel;
+                            border-width: 1px;
+                            border-color: Theme.hairline;
+                            VerticalLayout {
+                                padding: 10px;
+                                padding-top: 16px;
+                                spacing: 8px;
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 4px;
+                                    spacing: 10px;
+                                    Text {
+                                        text: "Up Next";
+                                        color: Theme.fg;
+                                        font-size: 16px;
+                                        font-weight: 700;
+                                    }
+                                    Text {
+                                        text: root.queue.length + (root.queue.length == 1 ? " track" : " tracks");
+                                        color: Theme.muted;
+                                        font-size: 12px;
+                                        horizontal-alignment: right;
+                                        vertical-alignment: center;
+                                    }
+                                    // Empties the list only; the files stay.
+                                    Rectangle {
+                                        horizontal-stretch: 0;
+                                        width: clear-label.preferred-width + 20px;
+                                        height: 24px;
+                                        y: (parent.height - self.height) / 2;
+                                        border-radius: 12px;
+                                        background: clear-ta.has-hover ? Theme.hover : Theme.faint;
+                                        clear-label := Text {
+                                            text: "Clear";
+                                            color: clear-ta.has-hover ? Theme.fg : Theme.muted;
+                                            font-size: 11.5px;
+                                            font-weight: 500;
+                                        }
+                                        clear-ta := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.clear-queue(); }
+                                        }
+                                    }
+                                }
+                                ListView {
+                                    for t[i] in root.queue: QueueRow {
+                                        track: t;
+                                        number: i + 1;
+                                        current: i == root.current-index;
+                                        clicked => { root.play-index(i); }
+                                action(a) => { root.row-action("queue", i, a); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ---------- Mini player ----------
+            if root.mini && !root.video-mode: Rectangle {
+                WindowMoveArea { }
+                HorizontalLayout {
+                    padding: 12px;
+                    padding-right: 10px;
+                    spacing: 12px;
+                    Rectangle {
+                        width: 60px;
+                        height: 60px;
+                        border-radius: 10px;
+                        background: Theme.faint;
+                        drop-shadow-blur: 14px;
+                        drop-shadow-offset-y: 5px;
+                        drop-shadow-color: #000000.with-alpha(Theme.dark ? 0.5 : 0.22);
+                        Rectangle {
+                            border-radius: 10px;
+                            clip: true;
+                            Image {
+                                width: 100%;
+                                height: 100%;
+                                source: root.artwork-small;
+                                image-fit: cover;
+                            }
+                        }
+                        if root.artwork-generated || !root.has-track: Icon {
+                            icon: root.has-track ? Icons.note : Icons.code;
+                            tint: #ffffff.with-alpha(0.9);
+                            width: 24px;
+                            height: 24px;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        Rectangle {
+                            height: 20px;
+                            clip: true;
+                            Text {
+                                width: 100%;
+                                text: root.has-track ? root.track-title : "Code session is empty";
+                                color: Theme.fg;
+                                font-size: 14px;
+                                font-weight: 600;
+                                horizontal-alignment: left;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                        Rectangle {
+                            height: 17px;
+                            clip: true;
+                            Text {
+                                width: 100%;
+                                text: root.has-track ? root.track-artist : "Choose some music to code to";
+                                color: Theme.muted;
+                                font-size: 12px;
+                                horizontal-alignment: left;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                    if root.has-track: HorizontalLayout {
+                        spacing: 2px;
+                        alignment: center;
+                        IconButton {
+                            icon: Icons.prev;
+                            solid: true;
+                            size: 34px;
+                            icon-size: 18px;
+                            y: (parent.height - self.height) / 2;
+                            clicked => { root.prev(); }
+                        }
+                        Rectangle {
+                            width: 38px;
+                            height: 38px;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: 19px;
+                            background: mini-play.pressed ? Theme.fg.darker(0.15) : Theme.fg;
+                            Icon {
+                                icon: root.playing ? Icons.pause : Icons.play;
+                                solid: true;
+                                tint: Theme.base;
+                                width: 17px;
+                                height: 17px;
+                            }
+                            mini-play := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.play-pause(); }
+                            }
+                        }
+                        IconButton {
+                            icon: Icons.next;
+                            solid: true;
+                            size: 34px;
+                            icon-size: 18px;
+                            y: (parent.height - self.height) / 2;
+                            clicked => { root.next(); }
+                        }
+                    }
+                    if !root.has-track: PrimaryButton {
+                        text: "Choose…";
+                        min-width: 90px;
+                        height: 34px;
+                        y: (parent.height - self.height) / 2;
+                        clicked => { root.open-folder(); }
+                    }
+                    IconButton {
+                        icon: Icons.expand;
+                        size: 28px;
+                        icon-size: 14px;
+                        tint: Theme.muted;
+                        y: (parent.height - self.height) / 2;
+                        clicked => { root.toggle-mini(); }
+                    }
+                }
+                // How far into the track we are, as a thin line along the bottom.
+                if root.has-track: Rectangle {
+                    x: 0;
+                    y: parent.height - 3px;
+                    height: 3px;
+                    width: parent.width * (root.duration > 0 ? Math.clamp(root.position / root.duration, 0, 1) : 0);
+                    background: Theme.accent;
+                }
+            }
+
+            // ---------- Video ----------
+            if root.show-video: Rectangle {
+                background: #000000;
+                Image {
+                    width: 100%;
+                    height: 100%;
+                    source: root.video-frame;
+                    image-fit: fill;
+                }
+                video-touch := TouchArea {
+                    mouse-cursor: root.hud-shown ? MouseCursor.default : MouseCursor.none;
+                    changed mouse-x => { root.video-activity(); }
+                    changed mouse-y => { root.video-activity(); }
+                    double-clicked => { if !root.mini { root.toggle-fullscreen(); } }
+                    // The little picture-in-picture window moves when dragged anywhere.
+                    if root.mini: WindowMoveArea { }
+                }
+
+                // Title along the top, over a soft shadow.
+                Rectangle {
+                    y: 0;
+                    height: root.mini ? 44px : 70px;
+                    opacity: root.hud-shown ? 1 : 0;
+                    animate opacity { duration: 260ms; easing: ease-out; }
+                    background: @linear-gradient(180deg, #000000.with-alpha(0.62) 0%, #000000.with-alpha(0) 100%);
+                    if !root.mini && !root.full-screen: WindowMoveArea { }
+                    if !root.mini && !root.full-screen: Rectangle {
+                        x: 96px;
+                        y: 14px;
+                        width: lib-label.preferred-width + 40px;
+                        height: 28px;
+                        border-radius: 14px;
+                        background: #ffffff.with-alpha(lib-ta.has-hover ? 0.24 : 0.14);
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 12px;
+                            spacing: 6px;
+                            Icon {
+                                icon: "M14.5 6l-6 6 6 6";
+                                tint: #ffffff;
+                                width: 14px;
+                                height: 14px;
+                                y: (parent.height - self.height) / 2;
+                            }
+                            lib-label := Text {
+                                text: "Library";
+                                color: #ffffff;
+                                font-size: 12.5px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+                        lib-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.video-browse = true; }
+                        }
+                    }
+                    if !root.mini && !root.full-screen: TrafficLights {
+                        x: 18px;
+                        y: 18px;
+                        close => { root.close-window(); }
+                        minimize => { root.minimized = true; }
+                        zoom => { root.maximized = !root.maximized; }
+                    }
+                    Text {
+                        x: root.mini ? 12px : 200px;
+                        y: root.mini ? 10px : 15px;
+                        width: parent.width - (root.mini ? 52px : 400px);
+                        text: root.track-title;
+                        color: #ffffff;
+                        font-size: root.mini ? 12px : 13.5px;
+                        font-weight: 600;
+                        horizontal-alignment: root.mini ? left : center;
+                        overflow: elide;
+                    }
+                    if root.mini: IconButton {
+                        x: parent.width - 36px;
+                        y: 4px;
+                        icon: Icons.expand;
+                        size: 30px;
+                        icon-size: 14px;
+                        tint: #ffffff;
+                        clicked => { root.toggle-mini(); }
+                    }
+                }
+
+                // Picture-in-picture: just the essentials in the middle.
+                if root.mini: HorizontalLayout {
+                    alignment: center;
+                    spacing: 14px;
+                    opacity: root.hud-shown ? 1 : 0;
+                    animate opacity { duration: 260ms; }
+                    IconButton {
+                        icon: Icons.prev;
+                        solid: true;
+                        tint: #ffffff;
+                        size: 40px;
+                        icon-size: 20px;
+                        y: (parent.height - self.height) / 2;
+                        clicked => { root.prev(); }
+                    }
+                    Rectangle {
+                        width: 48px;
+                        height: 48px;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: 24px;
+                        background: #ffffff.with-alpha(pip-play.has-hover ? 0.32 : 0.22);
+                        Icon {
+                            icon: root.playing ? Icons.pause : Icons.play;
+                            solid: true;
+                            tint: #ffffff;
+                            width: 22px;
+                            height: 22px;
+                        }
+                        pip-play := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.play-pause(); }
+                        }
+                    }
+                    IconButton {
+                        icon: Icons.next;
+                        solid: true;
+                        tint: #ffffff;
+                        size: 40px;
+                        icon-size: 20px;
+                        y: (parent.height - self.height) / 2;
+                        clicked => { root.next(); }
+                    }
+                }
+                if root.mini: Rectangle {
+                    x: 0;
+                    y: parent.height - 3px;
+                    height: 3px;
+                    width: parent.width * (root.duration > 0 ? Math.clamp(root.position / root.duration, 0, 1) : 0);
+                    background: Theme.accent;
+                }
+
+                // Up next, on the right.
+                if !root.mini && root.show-video-queue: Rectangle {
+                    x: parent.width - self.width - 16px;
+                    y: 70px;
+                    width: 320px;
+                    height: parent.height - 70px - 140px;
+                    border-radius: 16px;
+                    background: #16141b.with-alpha(0.9);
+                    border-width: 1px;
+                    border-color: #ffffff.with-alpha(0.1);
+                    VerticalLayout {
+                        padding: 10px;
+                        padding-top: 14px;
+                        spacing: 6px;
+                        Text {
+                            text: "Up Next";
+                            color: #ffffff;
+                            font-size: 15px;
+                            font-weight: 700;
+                            x: 10px;
+                        }
+                        ListView {
+                            for t[i] in root.queue: QueueRow {
+                                track: t;
+                                number: i + 1;
+                                current: i == root.current-index;
+                                clicked => { root.play-index(i); }
+                                action(a) => { root.row-action("queue", i, a); }
+                            }
+                        }
+                    }
+                }
+
+                // Notes on this video.
+                if !root.mini && root.show-notes: Rectangle {
+                    x: parent.width - self.width - 16px;
+                    y: 70px;
+                    width: 340px;
+                    height: parent.height - 70px - 140px;
+                    border-radius: 16px;
+                    background: #16141b.with-alpha(0.92);
+                    border-width: 1px;
+                    border-color: #ffffff.with-alpha(0.1);
+                    init => { note-input.focus(); }
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 10px;
+                        HorizontalLayout {
+                            Text {
+                                text: "Notes";
+                                color: #ffffff;
+                                font-size: 15px;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                            }
+                            if root.bookmarks.length > 0: Rectangle {
+                                width: export-text.preferred-width + 20px;
+                                height: 26px;
+                                border-radius: 13px;
+                                horizontal-stretch: 0;
+                                background: #ffffff.with-alpha(export-ta.has-hover ? 0.18 : 0.1);
+                                export-text := Text {
+                                    text: "Export .md";
+                                    color: #ffffff;
+                                    font-size: 11.5px;
+                                }
+                                export-ta := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.export-notes(); }
+                                }
+                            }
+                        }
+                        // New note at the current moment.
+                        Rectangle {
+                            height: 36px;
+                            border-radius: 10px;
+                            background: #ffffff.with-alpha(0.08);
+                            border-width: note-input.has-focus ? 1.5px : 0px;
+                            border-color: Theme.accent;
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                spacing: 8px;
+                                Text {
+                                    text: Fmt.time(root.position);
+                                    color: Theme.accent;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                                Rectangle {
+                                    note-input := TextInput {
+                                        width: 100%;
+                                        y: (parent.height - self.height) / 2;
+                                        vertical-alignment: center;
+                                        color: #ffffff;
+                                        font-size: 13px;
+                                        single-line: true;
+                                        accepted => {
+                                            root.add-bookmark(self.text);
+                                            self.text = "";
+                                        }
+                                        key-pressed(e) => {
+                                            if e.text == Key.Escape {
+                                                root.show-notes = false;
+                                                keys.focus();
+                                                return accept;
+                                            }
+                                            reject
+                                        }
+                                    }
+                                    if note-input.text == "": Text {
+                                        x: 0;
+                                        text: "Note at this moment, then Enter";
+                                        color: #ffffff.with-alpha(0.4);
+                                        font-size: 13px;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                        if root.bookmarks.length == 0: Text {
+                            text: "Press B any time to jot down what's happening, like \"closures explained here\". Click a time to jump back.";
+                            color: #ffffff.with-alpha(0.5);
+                            font-size: 12.5px;
+                            wrap: word-wrap;
+                        }
+                        ListView {
+                            for b[i] in root.bookmarks: Rectangle {
+                                height: Math.max(40px, note-text.preferred-height + 18px);
+                                border-radius: 10px;
+                                background: bm-ta.has-hover ? #ffffff.with-alpha(0.07) : transparent;
+                                bm-ta := TouchArea { }
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 4px;
+                                    spacing: 10px;
+                                    Rectangle {
+                                        width: 54px;
+                                        height: 24px;
+                                        y: 8px;
+                                        border-radius: 12px;
+                                        background: Theme.accent.with-alpha(time-ta.has-hover ? 0.4 : 0.25);
+                                        Text {
+                                            text: b.time;
+                                            color: #ffffff;
+                                            font-size: 11.5px;
+                                            font-weight: 600;
+                                        }
+                                        time-ta := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.seek-bookmark(i); }
+                                        }
+                                    }
+                                    note-text := Text {
+                                        text: b.note == "" ? "(no note)" : b.note;
+                                        color: b.note == "" ? #ffffff.with-alpha(0.4) : #ffffff;
+                                        font-size: 13px;
+                                        wrap: word-wrap;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: left;
+                                    }
+                                    IconButton {
+                                        icon: Icons.close;
+                                        tint: #ffffff.with-alpha(bm-ta.has-hover || self.hovered ? 0.7 : 0);
+                                        size: 26px;
+                                        icon-size: 13px;
+                                        y: 7px;
+                                        clicked => { root.delete-bookmark(i); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // The floating controls.
+                if !root.mini: Rectangle {
+                    width: Math.min(parent.width - 48px, 780px);
+                    height: 98px;
+                    x: (parent.width - self.width) / 2;
+                    y: parent.height - self.height - (root.hud-shown ? 26px : 14px);
+                    opacity: root.hud-shown ? 1 : 0;
+                    animate opacity, y { duration: 260ms; easing: ease-out; }
+                    border-radius: 20px;
+                    background: #17151c.with-alpha(0.78);
+                    border-width: 1px;
+                    border-color: #ffffff.with-alpha(0.13);
+                    drop-shadow-blur: 30px;
+                    drop-shadow-offset-y: 10px;
+                    drop-shadow-color: #00000080;
+                    // Keep the controls up while the pointer is on them.
+                    TouchArea {
+                        changed mouse-x => { root.video-activity(); }
+                    }
+                    VerticalLayout {
+                        padding-left: 18px;
+                        padding-right: 18px;
+                        padding-top: 12px;
+                        padding-bottom: 10px;
+                        spacing: 6px;
+                        HorizontalLayout {
+                            spacing: 12px;
+                            Text {
+                                text: Fmt.time(vscrub.shown * root.duration);
+                                color: #ffffff.with-alpha(0.75);
+                                font-size: 11px;
+                                vertical-alignment: center;
+                                min-width: 38px;
+                            }
+                            vscrub := NSlider {
+                                fill-color: #ffffff;
+                                track-color: #ffffff.with-alpha(0.22);
+                                value: root.duration > 0 ? root.position / root.duration : 0;
+                                released(v) => { root.seek(v * root.duration); }
+                                if root.ab-a >= 0 && root.duration > 0: Rectangle {
+                                    x: parent.width * root.ab-a / root.duration;
+                                    width: root.ab-b >= 0 ? parent.width * (root.ab-b - root.ab-a) / root.duration : 2px;
+                                    y: (parent.height - self.height) / 2;
+                                    height: 12px;
+                                    border-radius: 3px;
+                                    background: Theme.accent.with-alpha(0.5);
+                                }
+                                // Bookmarks as small ticks.
+                                for b[i] in root.bookmark-positions: Rectangle {
+                                    x: parent.width * b - 1px;
+                                    y: 0;
+                                    width: 2px;
+                                    height: 5px;
+                                    background: Theme.accent;
+                                }
+                            }
+                            Text {
+                                text: "−" + Fmt.time(root.duration - vscrub.shown * root.duration);
+                                color: #ffffff.with-alpha(0.75);
+                                font-size: 11px;
+                                vertical-alignment: center;
+                                horizontal-alignment: right;
+                                min-width: 44px;
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            // Volume
+                            HorizontalLayout {
+                                spacing: 8px;
+                                width: 150px;
+                                Icon {
+                                    icon: Icons.volume-high;
+                                    tint: #ffffff.with-alpha(0.8);
+                                    width: 16px;
+                                    height: 16px;
+                                    y: (parent.height - self.height) / 2;
+                                }
+                                NSlider {
+                                    y: (parent.height - self.height) / 2;
+                                    rest-thickness: 4px;
+                                    fill-color: #ffffff;
+                                    track-color: #ffffff.with-alpha(0.22);
+                                    value: root.volume / 100;
+                                    moved(v) => { root.set-volume(v * 100); }
+                                    released(v) => { root.set-volume(v * 100); }
+                                }
+                            }
+                            Rectangle { }
+                            IconButton {
+                                icon: Icons.prev;
+                                solid: true;
+                                tint: #ffffff;
+                                size: 40px;
+                                icon-size: 22px;
+                                y: (parent.height - self.height) / 2;
+                                clicked => { root.prev(); }
+                            }
+                            Rectangle {
+                                width: 46px;
+                                height: 46px;
+                                y: (parent.height - self.height) / 2;
+                                border-radius: 23px;
+                                background: hud-play.pressed ? #dddddd : #ffffff;
+                                Icon {
+                                    icon: root.playing ? Icons.pause : Icons.play;
+                                    solid: true;
+                                    tint: #111111;
+                                    width: 20px;
+                                    height: 20px;
+                                }
+                                hud-play := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.play-pause(); }
+                                }
+                            }
+                            IconButton {
+                                icon: Icons.next;
+                                solid: true;
+                                tint: #ffffff;
+                                size: 40px;
+                                icon-size: 22px;
+                                y: (parent.height - self.height) / 2;
+                                clicked => { root.next(); }
+                            }
+                            Rectangle { }
+                            HorizontalLayout {
+                                width: 300px;
+                                spacing: 2px;
+                                alignment: end;
+                                Rectangle {
+                                    width: 44px;
+                                    height: 24px;
+                                    y: (parent.height - self.height) / 2;
+                                    border-radius: 12px;
+                                    background: root.speed != 1 ? Theme.accent : #ffffff.with-alpha(hud-speed-ta.has-hover ? 0.2 : 0.12);
+                                    Text {
+                                        text: Math.round(root.speed * 100) / 100 + "×";
+                                        color: #ffffff;
+                                        font-size: 11px;
+                                        font-weight: 600;
+                                    }
+                                    hud-speed-ta := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { hud-speed-menu.show(); }
+                                    }
+                                    hud-speed-menu := PopupWindow {
+                                        x: -50px;
+                                        y: -self.height - 18px;
+                                        width: 150px;
+                                        height: 38px + root.speed-options.length * 33px;
+                                        TrackMenu {
+                                            heading: "SPEED";
+                                            options: root.speed-options;
+                                            pick(id) => { root.set-speed(id); }
+                                        }
+                                    }
+                                }
+                                Rectangle { width: 4px; }
+                                IconButton {
+                                    icon: Icons.loop;
+                                    tint: root.ab-a >= 0 ? Theme.accent : #ffffff;
+                                    badge: root.ab-a < 0 ? "" : root.ab-b < 0 ? "A" : "B";
+                                    size: 32px;
+                                    y: (parent.height - self.height) / 2;
+                                    clicked => { root.ab-loop(); }
+                                }
+                                IconButton {
+                                    icon: Icons.bookmark;
+                                    tint: root.show-notes ? Theme.accent : #ffffff;
+                                    size: 32px;
+                                    y: (parent.height - self.height) / 2;
+                                    clicked => {
+                                        root.show-notes = !root.show-notes;
+                                        root.show-video-queue = false;
+                                    }
+                                }
+                                cc := IconButton {
+                                    icon: Icons.captions;
+                                    tint: root.sub-tracks.length > 1 ? #ffffff : #ffffff.with-alpha(0.35);
+                                    size: 32px;
+                                    y: (parent.height - self.height) / 2;
+                                    clicked => { if root.sub-tracks.length > 1 { sub-menu.show(); } }
+                                    sub-menu := PopupWindow {
+                                        x: -100px;
+                                        y: -self.height - 14px;
+                                        width: 240px;
+                                        height: 38px + root.sub-tracks.length * 33px;
+                                        TrackMenu {
+                                            heading: "SUBTITLES";
+                                            options: root.sub-tracks;
+                                            pick(id) => { root.select-sub(id); }
+                                        }
+                                    }
+                                }
+                                IconButton {
+                                    icon: Icons.speaker;
+                                    tint: root.audio-tracks.length > 1 ? #ffffff : #ffffff.with-alpha(0.35);
+                                    size: 32px;
+                                    y: (parent.height - self.height) / 2;
+                                    clicked => { if root.audio-tracks.length > 1 { audio-menu.show(); } }
+                                    audio-menu := PopupWindow {
+                                        x: -100px;
+                                        y: -self.height - 14px;
+                                        width: 240px;
+                                        height: 38px + root.audio-tracks.length * 33px;
+                                        TrackMenu {
+                                            heading: "AUDIO";
+                                            options: root.audio-tracks;
+                                            pick(id) => { root.select-audio(id); }
+                                        }
+                                    }
+                                }
+                                IconButton {
+                                    icon: Icons.list;
+                                    active: root.show-video-queue;
+                                    tint: root.show-video-queue ? Theme.accent : #ffffff;
+                                    size: 32px;
+                                    y: (parent.height - self.height) / 2;
+                                    clicked => {
+                                        root.show-video-queue = !root.show-video-queue;
+                                        root.show-notes = false;
+                                    }
+                                }
+                                IconButton {
+                                    icon: Icons.shrink;
+                                    tint: #ffffff;
+                                    size: 32px;
+                                    icon-size: 16px;
+                                    y: (parent.height - self.height) / 2;
+                                    clicked => { root.toggle-mini(); }
+                                }
+                                IconButton {
+                                    icon: Icons.fullscreen;
+                                    tint: #ffffff;
+                                    size: 32px;
+                                    y: (parent.height - self.height) / 2;
+                                    clicked => { root.toggle-fullscreen(); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---------- Open folder sheet ----------
+        if root.show-open-sheet && !root.mini: Sheet {
+            card-width: 420px;
+            dismiss => { root.show-open-sheet = false; }
+            HorizontalLayout {
+                spacing: 14px;
+                Rectangle {
+                    width: 46px;
+                    height: 46px;
+                    border-radius: 13px;
+                    background: Theme.accent.with-alpha(0.18);
+                    Icon {
+                        icon: Icons.folder;
+                        tint: Theme.accent;
+                        width: 24px;
+                        height: 24px;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: root.sheet-folder;
+                        color: Theme.fg;
+                        font-size: 17px;
+                        font-weight: 700;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.sheet-found == 1 ? "1 track found" : root.sheet-found + " tracks found";
+                        color: Theme.muted;
+                        font-size: 13px;
+                    }
+                }
+            }
+            Segmented {
+                items: ["Play all", "Only some"];
+                selected <=> root.sheet-mode;
+            }
+            if root.sheet-mode == 1: VerticalLayout {
+                spacing: 14px;
+                SettingRow {
+                    label: "How many";
+                    hint: "";
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: end;
+                        IconButton {
+                            icon: Icons.minus;
+                            size: 30px;
+                            icon-size: 16px;
+                            clicked => { root.sheet-limit = Math.max(1, root.sheet-limit - (root.sheet-limit > 20 ? 10 : 5)); }
+                        }
+                        Text {
+                            text: root.sheet-limit;
+                            color: Theme.fg;
+                            font-size: 17px;
+                            font-weight: 600;
+                            min-width: 44px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        IconButton {
+                            icon: Icons.plus;
+                            size: 30px;
+                            icon-size: 16px;
+                            clicked => { root.sheet-limit = Math.min(Math.max(root.sheet-found, 1), root.sheet-limit + (root.sheet-limit >= 20 ? 10 : 5)); }
+                        }
+                    }
+                }
+                Segmented {
+                    items: ["First", "Random", "Newest"];
+                    selected <=> root.sheet-pick;
+                }
+            }
+            SettingRow {
+                label: "Include subfolders";
+                hint: "";
+                Switch {
+                    on <=> root.sheet-recursive;
+                    y: (parent.height - self.height) / 2;
+                    toggled => { root.sheet-rescan(); }
+                }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: end;
+                GhostButton {
+                    text: "Cancel";
+                    clicked => { root.show-open-sheet = false; }
+                }
+                PrimaryButton {
+                    text: root.sheet-mode == 0 ? "Play All" : "Play " + Math.min(root.sheet-limit, root.sheet-found);
+                    icon: Icons.play;
+                    clicked => { root.sheet-confirm(); }
+                }
+            }
+        }
+
+        // ---------- Open link sheet ----------
+        if root.show-link-sheet && !root.mini: Sheet {
+            card-width: 460px;
+            dismiss => { root.show-link-sheet = false; }
+            property <bool> audio-only;
+            HorizontalLayout {
+                spacing: 14px;
+                Rectangle {
+                    width: 46px;
+                    height: 46px;
+                    border-radius: 13px;
+                    background: Theme.accent.with-alpha(0.18);
+                    Icon {
+                        icon: Icons.link;
+                        tint: Theme.accent;
+                        width: 24px;
+                        height: 24px;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: "Play a link";
+                        color: Theme.fg;
+                        font-size: 17px;
+                        font-weight: 700;
+                    }
+                    Text {
+                        text: root.has-ytdlp ? "YouTube, SoundCloud, and most video sites." : "Needs yt-dlp. Install it, then try again.";
+                        color: root.has-ytdlp ? Theme.muted : Theme.accent;
+                        font-size: 13px;
+                    }
+                }
+            }
+            Rectangle {
+                height: 40px;
+                border-radius: 10px;
+                background: Theme.faint;
+                border-width: link-input.has-focus ? 1.5px : 0px;
+                border-color: Theme.accent;
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    Rectangle {
+                        link-input := TextInput {
+                            width: 100%;
+                            y: (parent.height - self.height) / 2;
+                            vertical-alignment: center;
+                            color: Theme.fg;
+                            font-size: 13.5px;
+                            single-line: true;
+                            init => { self.focus(); }
+                            accepted => { root.open-link(self.text, audio-only); }
+                        }
+                        if link-input.text == "": Text {
+                            x: 0;
+                            text: "Paste a link (Ctrl+V)";
+                            color: Theme.muted;
+                            font-size: 13.5px;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+            SettingRow {
+                label: "Audio only";
+                hint: "Lighter: skips the picture. Good for music and talks.";
+                Switch {
+                    on <=> audio-only;
+                    y: (parent.height - self.height) / 2;
+                }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: end;
+                GhostButton {
+                    text: "Cancel";
+                    clicked => { root.show-link-sheet = false; }
+                }
+                PrimaryButton {
+                    text: "Play";
+                    icon: Icons.play;
+                    clicked => { root.open-link(link-input.text, audio-only); }
+                }
+            }
+        }
+
+        // ---------- Move to Trash sheet ----------
+        if root.show-delete-sheet && !root.mini: Sheet {
+            card-width: 420px;
+            dismiss => { root.show-delete-sheet = false; }
+            HorizontalLayout {
+                spacing: 14px;
+                Rectangle {
+                    width: 46px;
+                    height: 46px;
+                    border-radius: 13px;
+                    background: Theme.danger.with-alpha(0.15);
+                    Icon {
+                        icon: Icons.trash;
+                        tint: Theme.danger;
+                        width: 24px;
+                        height: 24px;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: "Move to the Trash?";
+                        color: Theme.fg;
+                        font-size: 17px;
+                        font-weight: 700;
+                    }
+                    Rectangle {
+                        height: 20px;
+                        clip: true;
+                        Text {
+                            width: 100%;
+                            text: root.delete-title;
+                            color: Theme.fg;
+                            font-size: 13.5px;
+                            horizontal-alignment: left;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+            Text {
+                text: "The file leaves your library and your disk. You can get it back from the Trash.";
+                color: Theme.muted;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            Rectangle {
+                height: 18px;
+                clip: true;
+                Text {
+                    width: 100%;
+                    text: root.delete-path;
+                    color: Theme.muted;
+                    font-size: 11px;
+                    horizontal-alignment: left;
+                    overflow: elide;
+                }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: end;
+                GhostButton {
+                    text: "Cancel";
+                    clicked => { root.show-delete-sheet = false; }
+                }
+                Rectangle {
+                    height: 38px;
+                    width: trash-label.preferred-width + 36px;
+                    border-radius: 11px;
+                    background: trash-ta.pressed ? Theme.danger.darker(0.15) : Theme.danger;
+                    trash-label := Text {
+                        text: "Move to Trash";
+                        color: #ffffff;
+                        font-size: 14px;
+                        font-weight: 600;
+                    }
+                    trash-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.confirm-delete(); }
+                    }
+                }
+            }
+        }
+
+        // ---------- Equalizer sheet ----------
+        if root.show-equalizer && !root.mini: Sheet {
+            card-width: Math.min(660px, root.width - 48px);
+            dismiss => { root.show-equalizer = false; }
+            // Header: title, Auto, on/off
+            HorizontalLayout {
+                spacing: 12px;
+                Rectangle {
+                    width: 40px;
+                    height: 40px;
+                    border-radius: 11px;
+                    background: Theme.accent;
+                    Icon {
+                        icon: Icons.eq;
+                        tint: Theme.on-accent;
+                        width: 22px;
+                        height: 22px;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: "Equalizer";
+                        color: Theme.fg;
+                        font-size: 20px;
+                        font-weight: 700;
+                    }
+                    if root.eq-auto-label != "": Text {
+                        text: root.eq-auto-label;
+                        color: Theme.accent;
+                        font-size: 11px;
+                        font-weight: 700;
+                        letter-spacing: 0.5px;
+                    }
+                }
+                Rectangle { }
+                Rectangle {
+                    horizontal-stretch: 0;
+                    width: auto-row.preferred-width + 24px;
+                    height: 32px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 16px;
+                    background: root.eq-auto ? Theme.accent : auto-ta.has-hover ? Theme.hover : Theme.faint;
+                    auto-row := HorizontalLayout {
+                        padding-left: 12px;
+                        spacing: 6px;
+                        Icon {
+                            icon: Icons.sparkle;
+                            solid: true;
+                            tint: root.eq-auto ? Theme.on-accent : Theme.fg;
+                            width: 14px;
+                            height: 14px;
+                            y: (parent.height - self.height) / 2;
+                        }
+                        Text {
+                            text: "Auto";
+                            color: root.eq-auto ? Theme.on-accent : Theme.fg;
+                            font-size: 13px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                    auto-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.eq-auto-changed(!root.eq-auto); }
+                    }
+                }
+                Switch {
+                    on: root.eq-on;
+                    y: (parent.height - self.height) / 2;
+                    toggled(v) => { root.eq-toggle(v); }
+                }
+            }
+            // Presets, scrolling sideways
+            HorizontalLayout {
+                spacing: 6px;
+                IconButton {
+                    icon: "M14.5 6l-6 6 6 6";
+                    size: 28px;
+                    icon-size: 14px;
+                    tint: Theme.muted;
+                    y: (parent.height - self.height) / 2;
+                    clicked => { chips.content-x = Math.min(0, chips.content-x + 240px); }
+                }
+                chips := Flickable {
+                    height: 32px;
+                    content-width: chip-row.preferred-width;
+                    animate content-x { duration: 260ms; easing: ease-out; }
+                    chip-row := HorizontalLayout {
+                        spacing: 6px;
+                        for name in root.eq-presets: Rectangle {
+                            height: 30px;
+                            width: chip-text.preferred-width + 26px;
+                            border-radius: 15px;
+                            background: root.eq-preset == name && root.eq-on ? (root.eq-auto ? Theme.accent.with-alpha(0.35) : Theme.accent) : chip-ta.has-hover ? Theme.hover : Theme.faint;
+                            chip-text := Text {
+                                text: name;
+                                color: root.eq-preset == name && root.eq-on && !root.eq-auto ? Theme.on-accent : Theme.fg;
+                                font-size: 12.5px;
+                                font-weight: 500;
+                            }
+                            chip-ta := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.eq-preset-chosen(name); }
+                            }
+                        }
+                    }
+                }
+                IconButton {
+                    icon: "M9.5 6l6 6-6 6";
+                    size: 28px;
+                    icon-size: 14px;
+                    tint: Theme.muted;
+                    y: (parent.height - self.height) / 2;
+                    clicked => { chips.content-x = Math.max(chips.width - chips.content-width, chips.content-x - 240px); }
+                }
+            }
+            // Preamp
+            HorizontalLayout {
+                spacing: 12px;
+                Text {
+                    text: "Preamp";
+                    color: Theme.fg;
+                    font-size: 13px;
+                    font-weight: 500;
+                    vertical-alignment: center;
+                    min-width: 60px;
+                }
+                NSlider {
+                    value: (root.eq-preamp + 12) / 24;
+                    fill-color: Theme.accent;
+                    released(v) => { root.eq-preamp-changed(v * 24 - 12); }
+                }
+                Text {
+                    text: (root.eq-preamp > 0 ? "+" : "") + Math.round(root.eq-preamp * 10) / 10 + " dB";
+                    color: Theme.muted;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    min-width: 52px;
+                    horizontal-alignment: right;
+                }
+            }
+            // The curve: drag a point up or down; double-click resets it.
+            Rectangle {
+                height: Math.max(120px, Math.min(200px, root.height - 430px));
+                border-radius: 14px;
+                background: Theme.faint;
+                Rectangle {
+                    y: parent.height / 2;
+                    height: 1px;
+                    background: Theme.fg.with-alpha(0.12);
+                }
+                Path {
+                    width: 100%;
+                    height: 100%;
+                    viewbox-width: 1000;
+                    viewbox-height: 200;
+                    commands: root.eq-fill;
+                    fill: @linear-gradient(180deg, Theme.accent.with-alpha(root.eq-on ? 0.35 : 0.12) 0%, Theme.accent.with-alpha(0) 100%);
+                    stroke: transparent;
+                }
+                Path {
+                    width: 100%;
+                    height: 100%;
+                    viewbox-width: 1000;
+                    viewbox-height: 200;
+                    commands: root.eq-curve;
+                    fill: transparent;
+                    stroke: root.eq-on ? Theme.accent : Theme.muted;
+                    stroke-width: 2.5px;
+                }
+                for g[i] in root.eq-gains: Rectangle {
+                    x: parent.width * i / 10;
+                    width: parent.width / 10;
+                    Rectangle {
+                        width: band-ta.pressed ? 18px : band-ta.has-hover ? 16px : 13px;
+                        height: self.width;
+                        border-radius: self.width / 2;
+                        x: (parent.width - self.width) / 2;
+                        y: parent.height * (100 - g * 7.5) / 200 - self.height / 2;
+                        background: #ffffff;
+                        border-width: 2.5px;
+                        border-color: root.eq-on ? Theme.accent : Theme.muted;
+                        animate width { duration: 120ms; }
+                    }
+                    Text {
+                        y: parent.height - 20px;
+                        width: parent.width;
+                        text: ["31", "62", "125", "250", "500", "1K", "2K", "4K", "8K", "16K"][i];
+                        color: Theme.muted;
+                        font-size: 10.5px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+                    if band-ta.pressed || band-ta.has-hover: Text {
+                        y: 6px;
+                        width: parent.width;
+                        text: (g > 0 ? "+" : "") + Math.round(g * 10) / 10;
+                        color: Theme.fg;
+                        font-size: 10.5px;
+                        horizontal-alignment: center;
+                    }
+                    band-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        pointer-event(e) => {
+                            if e.kind == PointerEventKind.down {
+                                root.eq-band(i, Math.clamp((0.5 - self.mouse-y / self.height) * 200 / 7.5, -12, 12));
+                            }
+                        }
+                        moved => {
+                            if self.pressed {
+                                root.eq-band(i, Math.clamp((0.5 - self.mouse-y / self.height) * 200 / 7.5, -12, 12));
+                            }
+                        }
+                        double-clicked => { root.eq-band(i, 0); }
+                    }
+                }
+            }
+            // Your presets
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: "My presets";
+                    color: Theme.fg;
+                    font-size: 13px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                for name[i] in root.eq-custom: Rectangle {
+                    height: 28px;
+                    y: (parent.height - self.height) / 2;
+                    horizontal-stretch: 0;
+                    width: my-text.preferred-width + 40px;
+                    border-radius: 14px;
+                    background: root.eq-preset == name && !root.eq-auto ? Theme.accent : my-ta.has-hover ? Theme.hover : Theme.faint;
+                    my-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.eq-preset-chosen(name); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 4px;
+                        my-text := Text {
+                            text: name;
+                            color: root.eq-preset == name && !root.eq-auto ? Theme.on-accent : Theme.fg;
+                            font-size: 12.5px;
+                            vertical-alignment: center;
+                        }
+                        IconButton {
+                            icon: Icons.close;
+                            size: 22px;
+                            icon-size: 11px;
+                            tint: Theme.muted;
+                            y: (parent.height - self.height) / 2;
+                            clicked => { root.eq-delete(i); }
+                        }
+                    }
+                }
+                Rectangle {
+                    height: 30px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 9px;
+                    background: Theme.faint;
+                    min-width: 120px;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        Rectangle {
+                            preset-name := TextInput {
+                                width: 100%;
+                                y: (parent.height - self.height) / 2;
+                                vertical-alignment: center;
+                                color: Theme.fg;
+                                font-size: 12.5px;
+                                single-line: true;
+                                accepted => {
+                                    root.eq-save(self.text);
+                                    self.text = "";
+                                }
+                            }
+                            if preset-name.text == "": Text {
+                                x: 0;
+                                text: "Name this sound…";
+                                color: Theme.muted;
+                                font-size: 12.5px;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+                GhostButton {
+                    text: "Save";
+                    height: 30px;
+                    min-width: 64px;
+                    y: (parent.height - self.height) / 2;
+                    clicked => {
+                        root.eq-save(preset-name.text);
+                        preset-name.text = "";
+                    }
+                }
+            }
+            HorizontalLayout {
+                Text {
+                    text: root.eq-auto ? "Auto picks a sound for each song from its genre, or from how it sounds when there's no genre." : "Drag a point to shape the sound. Double-click resets it.";
+                    color: Theme.muted;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                    horizontal-stretch: 1;
+                }
+                PrimaryButton {
+                    text: "Done";
+                    clicked => { root.show-equalizer = false; }
+                }
+            }
+        }
+
+        // ---------- Appearance sheet ----------
+        if root.show-settings && !root.mini: Sheet {
+            card-width: 420px;
+            dismiss => { root.show-settings = false; }
+            Text {
+                text: "Settings";
+                color: Theme.fg;
+                font-size: 20px;
+                font-weight: 700;
+            }
+            VerticalLayout {
+                spacing: 8px;
+                HorizontalLayout {
+                    Text {
+                        text: "Glass";
+                        color: Theme.fg;
+                        font-size: 14px;
+                        font-weight: 500;
+                    }
+                    Text {
+                        text: Math.round(root.glass * 100) + "%";
+                        color: Theme.muted;
+                        font-size: 13px;
+                        horizontal-alignment: right;
+                    }
+                }
+                NSlider {
+                    value: root.glass;
+                    fill-color: Theme.accent;
+                    moved(v) => { root.glass = v; root.glass-changed(v); }
+                    released(v) => { root.glass = v; root.glass-changed(v); }
+                }
+                HorizontalLayout {
+                    Text {
+                        text: "Calm";
+                        color: Theme.muted;
+                        font-size: 11.5px;
+                    }
+                    Text {
+                        text: "Vivid";
+                        color: Theme.muted;
+                        font-size: 11.5px;
+                        horizontal-alignment: right;
+                    }
+                }
+            }
+            VerticalLayout {
+                spacing: 8px;
+                Text {
+                    text: "Theme";
+                    color: Theme.fg;
+                    font-size: 14px;
+                    font-weight: 500;
+                }
+                Segmented {
+                    items: ["System", "Light", "Dark"];
+                    selected <=> root.theme-mode;
+                    changed(i) => { root.theme-changed(i); }
+                }
+            }
+            SettingRow {
+                label: "Find lyrics online";
+                hint: "Asks LRCLIB with the song's title and artist.";
+                Switch {
+                    on <=> root.online-lyrics;
+                    y: (parent.height - self.height) / 2;
+                    toggled(v) => { root.online-lyrics-changed(v); }
+                }
+            }
+            SettingRow {
+                label: "Pause when the screen locks";
+                hint: "Picks up again when you come back.";
+                Switch {
+                    on <=> root.pause-on-lock;
+                    y: (parent.height - self.height) / 2;
+                    toggled(v) => { root.pause-on-lock-changed(v); }
+                }
+            }
+            // Library folders: removing one only takes it out of Nava.
+            VerticalLayout {
+                spacing: 6px;
+                HorizontalLayout {
+                    Text {
+                        text: "Library folders";
+                        color: Theme.fg;
+                        font-size: 14px;
+                        font-weight: 500;
+                        vertical-alignment: center;
+                    }
+                    IconButton {
+                        icon: Icons.plus;
+                        tint: Theme.muted;
+                        size: 26px;
+                        icon-size: 14px;
+                        clicked => { root.add-library-folder(); }
+                    }
+                }
+                if root.library-folders.length == 0: Text {
+                    text: "None yet. Add the folders where you keep music and videos.";
+                    color: Theme.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                for f[i] in root.library-folders: Rectangle {
+                    height: 34px;
+                    border-radius: 9px;
+                    background: Theme.faint;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 4px;
+                        spacing: 8px;
+                        Icon {
+                            icon: Icons.folder;
+                            tint: Theme.muted;
+                            width: 16px;
+                            height: 16px;
+                            y: (parent.height - self.height) / 2;
+                        }
+                        Rectangle {
+                            clip: true;
+                            preferred-width: 0px;
+                            min-width: 0px;
+                            horizontal-stretch: 1;
+                            Text {
+                                width: 100%;
+                                text: f;
+                                color: Theme.fg;
+                                font-size: 12.5px;
+                                horizontal-alignment: left;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                        IconButton {
+                            icon: Icons.close;
+                            tint: self.hovered ? Theme.danger : Theme.muted;
+                            size: 26px;
+                            icon-size: 12px;
+                            y: (parent.height - self.height) / 2;
+                            clicked => { root.remove-library-folder(i); }
+                        }
+                    }
+                }
+                Text {
+                    text: "× takes a folder out of Nava. Nothing is deleted from your disk.";
+                    color: Theme.muted;
+                    font-size: 11.5px;
+                    wrap: word-wrap;
+                }
+            }
+            HorizontalLayout {
+                alignment: end;
+                PrimaryButton {
+                    text: "Done";
+                    clicked => { root.show-settings = false; }
+                }
+            }
+        }
+
+        // Hairline around the window so it reads as one piece of glass.
+        Rectangle {
+            border-radius: root.radius;
+            border-width: 1px;
+            border-color: Theme.dark ? #ffffff.with-alpha(0.12) : #000000.with-alpha(0.12);
+        }
+    }
+}

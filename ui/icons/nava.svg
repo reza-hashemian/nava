@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff9a6b"/>
+      <stop offset="0.5" stop-color="#e2477a"/>
+      <stop offset="1" stop-color="#6a5cf5"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.3" cy="0.25" r="0.7">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.6"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg)"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#glow)"/>
+  <rect x="70" y="70" width="884" height="884" rx="194" fill="none" stroke="url(#edge)" stroke-width="12"/>
+  <!-- a soft wave: "nava" means melody -->
+  <path d="M190 640 C 290 560, 360 720, 460 640 S 640 560, 740 640 S 860 700, 860 660" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="22" stroke-linecap="round"/>
+  <!-- note -->
+  <path d="M430 300 L 690 250 L 690 560" fill="none" stroke="#ffffff" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M430 300 L 430 640" fill="none" stroke="#ffffff" stroke-width="44" stroke-linecap="round"/>
+  <ellipse cx="370" cy="650" rx="78" ry="62" fill="#ffffff"/>
+  <ellipse cx="630" cy="570" rx="78" ry="62" fill="#ffffff"/>
+</svg>

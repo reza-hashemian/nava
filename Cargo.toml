@@ -1,0 +1,75 @@
+[package]
+name = "nava"
+version = "0.1.0"
+edition = "2024"
+description = "A calm, glassy music and video player (Slint + libmpv)"
+license = "MIT"
+repository = "https://github.com/reza-hashemian/nava"
+readme = "README.md"
+
+[dependencies]
+anyhow = "1.0.104"
+dirs = "7.0.0"
+fastrand = "2.5.0"
+glow = "0.18"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
+lofty = "0.25.4"
+rfd = "0.17.2"
+rusqlite = { version = "0.41.0", features = ["bundled"] }
+slint = { version = "1.18.1", default-features = false, features = ["std", "backend-winit", "renderer-software", "renderer-femtovg", "renderer-skia", "compat-1-2", "unstable-winit-030", "system-tray"] }
+trash = "5.2.9"
+
+# Global shortcuts: our own event-driven X11 grab on Linux, global-hotkey elsewhere.
+# Media keys too: our own MPRIS service on Linux, souvlaki on macOS/Windows.
+[target.'cfg(target_os = "linux")'.dependencies]
+x11-dl = "2.21"
+zbus = "5.19"
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+global-hotkey = "0.9.0"
+souvlaki = "0.8.3"
+
+[build-dependencies]
+slint-build = "1.18.1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[dev-dependencies]
+resvg = "0.48"
+
+# --- Packaging (used by CI) ---
+
+[package.metadata.deb]
+section = "sound"
+priority = "optional"
+depends = "$auto"
+recommends = "yt-dlp"
+extended-description = "Nava is a calm, glassy music and video player written in Rust, built on Slint and libmpv."
+assets = [
+    ["target/release/nava", "usr/bin/", "755"],
+    ["packaging/linux/nava.desktop", "usr/share/applications/", "644"],
+    ["ui/icons/nava.svg", "usr/share/icons/hicolor/scalable/apps/nava.svg", "644"],
+    ["ui/icons/nava-512.png", "usr/share/icons/hicolor/512x512/apps/nava.png", "644"],
+    ["ui/icons/nava-256.png", "usr/share/icons/hicolor/256x256/apps/nava.png", "644"],
+    ["ui/icons/nava-128.png", "usr/share/icons/hicolor/128x128/apps/nava.png", "644"],
+    ["ui/icons/nava-64.png", "usr/share/icons/hicolor/64x64/apps/nava.png", "644"],
+    ["ui/icons/nava-32.png", "usr/share/icons/hicolor/32x32/apps/nava.png", "644"],
+    ["README.md", "usr/share/doc/nava/README.md", "644"],
+]
+
+[package.metadata.generate-rpm]
+auto-req = "builtin"
+assets = [
+    { source = "target/release/nava", dest = "/usr/bin/nava", mode = "755" },
+    { source = "packaging/linux/nava.desktop", dest = "/usr/share/applications/nava.desktop", mode = "644" },
+    { source = "ui/icons/nava.svg", dest = "/usr/share/icons/hicolor/scalable/apps/nava.svg", mode = "644" },
+    { source = "ui/icons/nava-512.png", dest = "/usr/share/icons/hicolor/512x512/apps/nava.png", mode = "644" },
+    { source = "ui/icons/nava-256.png", dest = "/usr/share/icons/hicolor/256x256/apps/nava.png", mode = "644" },
+    { source = "ui/icons/nava-128.png", dest = "/usr/share/icons/hicolor/128x128/apps/nava.png", mode = "644" },
+    { source = "ui/icons/nava-64.png", dest = "/usr/share/icons/hicolor/64x64/apps/nava.png", mode = "644" },
+    { source = "ui/icons/nava-32.png", dest = "/usr/share/icons/hicolor/32x32/apps/nava.png", mode = "644" },
+]

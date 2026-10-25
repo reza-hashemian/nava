@@ -1,0 +1,267 @@
+# Builds Nava for Linux, macOS and Windows.
+# - Every push to main / PR: builds everything and keeps the files as workflow artifacts.
+# - A tag like v0.2.0: also publishes them as a GitHub Release.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---------------------------------------------------------------- Linux: .deb .rpm .tar.gz
+  # Built on Debian 12 (glibc 2.36, libmpv2): runs on Debian 12+, Ubuntu 24.04+,
+  # Fedora, openSUSE, Arch, Mint 22+ ... Older systems: use the AppImage.
+  linux:
+    name: Linux ${{ matrix.arch }} (deb, rpm, tar.gz)
+    runs-on: ${{ matrix.runner }}
+    container: debian:bookworm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64,  deb_arch: amd64, runner: ubuntu-24.04 }
+          - { arch: aarch64, deb_arch: arm64, runner: ubuntu-24.04-arm }
+    steps:
+      - name: System packages
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential pkg-config clang curl ca-certificates git python3 xz-utils \
+            libmpv-dev libfontconfig-dev libfreetype-dev libxkbcommon-dev libx11-dev
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { key: "linux-${{ matrix.arch }}" }
+      - uses: taiki-e/install-action@v2
+        with: { tool: "cargo-deb,cargo-generate-rpm" }
+
+      - name: Version
+        shell: bash
+        run: echo "VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          cargo deb --no-build --no-strip -o "dist/nava_${VERSION}_${{ matrix.deb_arch }}.deb"
+          cargo generate-rpm -o "dist/nava-${VERSION}-1.${{ matrix.arch }}.rpm"
+          T="nava-${VERSION}-linux-${{ matrix.arch }}"
+          mkdir -p "$T"
+          cp target/release/nava README.md packaging/linux/nava.desktop ui/icons/nava.svg "$T/"
+          tar -czf "dist/$T.tar.gz" "$T"
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nava-linux-${{ matrix.arch }}
+          path: dist/*
+
+  # ---------------------------------------------------------------- Linux: AppImage
+  # Built on Ubuntu 22.04 (older glibc) with libmpv and its libraries bundled inside,
+  # so it runs on almost any distro from 2022 on.
+  appimage:
+    name: AppImage ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64,  runner: ubuntu-22.04 }
+          - { arch: aarch64, runner: ubuntu-22.04-arm }
+    steps:
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config clang libfuse2 file \
+            libmpv-dev libfontconfig-dev libfreetype-dev libxkbcommon-dev libx11-dev
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { key: "appimage-${{ matrix.arch }}" }
+
+      - name: Version
+        run: echo "VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Make AppImage
+        run: |
+          A=${{ matrix.arch }}
+          curl -fsSLo linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$A.AppImage"
+          chmod +x linuxdeploy
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          cp ui/icons/nava-256.png AppDir/usr/share/icons/hicolor/256x256/apps/nava.png
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export LDAI_OUTPUT="nava-${VERSION}-$A.AppImage"
+          ./linuxdeploy --appdir AppDir \
+            -e target/release/nava \
+            -d packaging/linux/nava.desktop \
+            -i AppDir/usr/share/icons/hicolor/256x256/apps/nava.png \
+            --output appimage
+          mkdir -p dist && mv nava-*.AppImage dist/
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nava-appimage-${{ matrix.arch }}
+          path: dist/*
+
+  # ---------------------------------------------------------------- macOS: .dmg
+  # libmpv from Homebrew, copied into the .app with dylibbundler so users need nothing else.
+  # Not signed with a Developer ID: first launch needs right-click > Open.
+  macos:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: arm64,  runner: macos-15 }
+          - { arch: x86_64, runner: macos-15-intel }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Homebrew packages
+        run: |
+          brew install mpv dylibbundler
+          echo "RUSTFLAGS=-L $(brew --prefix)/lib" >> "$GITHUB_ENV"
+          echo "MACOSX_DEPLOYMENT_TARGET=$(sw_vers -productVersion | cut -d. -f1).0" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { key: "macos-${{ matrix.arch }}" }
+
+      - name: Version
+        run: echo "VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Make Nava.app and .dmg
+        run: |
+          APP=dist/Nava.app
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
+          cp target/release/nava "$APP/Contents/MacOS/"
+          sed -e "s/@VERSION@/$VERSION/g" \
+              -e "s/<string>11.0</<string>$MACOSX_DEPLOYMENT_TARGET</" \
+              packaging/macos/Info.plist > "$APP/Contents/Info.plist"
+
+          # Icon
+          ICONSET=nava.iconset; mkdir -p $ICONSET
+          for s in 16 32 128 256 512; do
+            sips -z $s $s ui/icons/nava-512.png --out $ICONSET/icon_${s}x${s}.png >/dev/null
+            d=$((s*2)); sips -z $d $d ui/icons/nava-512.png --out $ICONSET/icon_${s}x${s}@2x.png >/dev/null
+          done
+          iconutil -c icns $ICONSET -o "$APP/Contents/Resources/nava.icns"
+
+          # Bundle libmpv and everything it needs
+          dylibbundler -od -b -cd \
+            -x "$APP/Contents/MacOS/nava" \
+            -d "$APP/Contents/Frameworks" \
+            -p @executable_path/../Frameworks/
+
+          codesign --force --deep --sign - "$APP"
+
+          hdiutil create -volname Nava -srcfolder "$APP" -ov -format UDZO \
+            "dist/nava-${VERSION}-macos-${{ matrix.arch }}.dmg"
+          rm -rf "$APP"
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nava-macos-${{ matrix.arch }}
+          path: dist/*
+
+  # ---------------------------------------------------------------- Windows: setup.exe + .zip
+  # libmpv from shinchiro/mpv-winbuild-cmake; an import library is made from the DLL for MSVC.
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { key: "windows-x64" }
+
+      - name: Get libmpv
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $dir = "$env:RUNNER_TEMP\mpv"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          $rel = gh api repos/shinchiro/mpv-winbuild-cmake/releases/latest | ConvertFrom-Json
+          $asset = $rel.assets | Where-Object { $_.name -match '^mpv-dev-x86_64-\d' } | Select-Object -First 1
+          if (-not $asset) { throw "libmpv dev package not found" }
+          Write-Host "Using $($asset.name)"
+          Invoke-WebRequest $asset.browser_download_url -OutFile "$dir\mpv.7z"
+          7z x "$dir\mpv.7z" "-o$dir" -y | Out-Null
+          $dll = Get-ChildItem $dir -Recurse -Filter 'libmpv-2.dll' | Select-Object -First 1
+          if (-not $dll) { throw "libmpv-2.dll not found" }
+
+          # MSVC needs mpv.lib: build it from the DLL's exports.
+          $exports = dumpbin /exports $dll.FullName | ForEach-Object {
+            if ($_ -match '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]{8}\s+(\S+)') { $Matches[1] }
+          }
+          @("LIBRARY libmpv-2", "EXPORTS") + $exports | Set-Content "$dir\mpv.def"
+          lib /nologo /def:"$dir\mpv.def" /name:libmpv-2.dll /out:"$dir\mpv.lib" /machine:x64
+
+          "RUSTFLAGS=-L native=$dir" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "MPV_DLL=$($dll.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Version
+        shell: bash
+        run: echo "VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $out = "dist\nava"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item target\release\nava.exe, $env:MPV_DLL, README.md $out
+          Compress-Archive -Path "$out\*" -DestinationPath "dist\nava-$env:VERSION-windows-x64.zip"
+
+          choco install innosetup -y --no-progress | Out-Null
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Qp `
+            "/DAppVersion=$env:VERSION" "/DSrcDir=$PWD\$out" "/O$PWD\dist" packaging\windows\nava.iss
+          Remove-Item -Recurse $out
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nava-windows-x64
+          path: dist/*
+
+  # ---------------------------------------------------------------- Release (tags only)
+  release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, appimage, macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS.txt && ls -la
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

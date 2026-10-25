@@ -1,0 +1,477 @@
+// Small building blocks for Nava's glass interface.
+
+export global Theme {
+    in-out property <bool> dark: true;
+    // 0 = calm, nearly solid surfaces; 1 = full, colourful glass.
+    in-out property <float> glass: 0.8;
+    in-out property <color> accent: #e0587b;
+    // Brightness of the artwork's average colour, 0..1. Used to keep text readable.
+    in-out property <float> mood-lum: 0.4;
+
+    out property <color> base: dark ? #15131a : #f3f1f7;
+    out property <color> fg: dark ? #f6f4f9 : #1b1a21;
+    out property <color> muted: dark ? #f6f4f9.with-alpha(0.6) : #1b1a21.with-alpha(0.58);
+    out property <color> faint: dark ? #ffffff.with-alpha(0.08) : #000000.with-alpha(0.06);
+    out property <color> hover: dark ? #ffffff.with-alpha(0.10) : #000000.with-alpha(0.06);
+    out property <color> hairline: dark ? #ffffff.with-alpha(0.10) : #ffffff.with-alpha(0.6);
+    // Glass panels: thinner and clearer as `glass` goes up.
+    out property <color> panel: dark ? #ffffff.with-alpha(0.045 + (1 - glass) * 0.05) : #ffffff.with-alpha(0.26 + (1 - glass) * 0.44);
+    // Sheets float over busy content and there is no backdrop blur, so they stay nearly solid.
+    out property <color> sheet: dark ? #221f29.with-alpha(0.97) : #fbfaff.with-alpha(0.97);
+    // The veil over the blurred artwork. Never thinner than what keeps text readable.
+    out property <float> veil: dark
+        ? Math.max(0.9 - glass * 0.72, mood-lum * 0.5)
+        : Math.max(0.9 - glass * 0.68, (1 - mood-lum) * 0.36);
+    out property <color> on-accent: #ffffff;
+    out property <color> danger: dark ? #ff6b6b : #d93636;
+}
+
+export global Icons {
+    // Solid icons use sharp corners: tiny rounded corners blur or notch at small sizes.
+    out property <string> play: "M8 5.2v13.6L19.2 12z";
+    // Two bars with a wide gap, so they never merge into a square.
+    out property <string> pause: "M6.4 5h3.6v14H6.4z M14 5h3.6v14H14z";
+    // Next / previous: a sharp triangle beside a bar, not touching it.
+    out property <string> next: "M15.6 5H18v14h-2.4z M5.5 5.6v12.8L14.6 12z";
+    // Previous.
+    out property <string> prev: "M6 5h2.4v14H6z M18.5 5.6v12.8L9.4 12z";
+    out property <string> shuffle: "M3 7h3.2c2 0 3.2.9 4.3 2.6l2.9 4.8c1.1 1.7 2.3 2.6 4.3 2.6H21 M3 17h3.2c2 0 3.2-.9 4.3-2.6 M13.4 9.6c1.1-1.7 2.3-2.6 4.3-2.6H21 M18 4l3 3-3 3 M18 14l3 3-3 3";
+    out property <string> repeat: "M17 2.5l3.5 3.5-3.5 3.5 M3.5 11.5V10a4 4 0 0 1 4-4h13 M7 21.5L3.5 18 7 14.5 M20.5 12.5V14a4 4 0 0 1-4 4h-13";
+    out property <string> folder: "M3 7.5A2.5 2.5 0 0 1 5.5 5h3.6l2 2h7.4A2.5 2.5 0 0 1 21 9.5v7a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5z M12 10.5v5 M9.5 13h5";
+    out property <string> sliders: "M4 7h9 M17 7h3 M15 5v4 M4 17h3 M11 17h9 M9 15v4";
+    out property <string> volume-low: "M11 5.5L6.5 9H4v6h2.5l4.5 3.5z M15.2 9.8a3.2 3.2 0 0 1 0 4.4";
+    out property <string> volume-high: "M11 5.5L6.5 9H4v6h2.5l4.5 3.5z M15.2 9.8a3.2 3.2 0 0 1 0 4.4 M18 7a7 7 0 0 1 0 10";
+    out property <string> code: "M8.5 7l-5 5 5 5 M15.5 7l5 5-5 5";
+    out property <string> moon: "M20 14.6A8 8 0 1 1 9.4 4a6.4 6.4 0 0 0 10.6 10.6z";
+    out property <string> disc: "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z M12 10a2 2 0 1 0 0 4a2 2 0 1 0 0-4z";
+    out property <string> note: "M9 18V5.5l11-2V16 M9 18a3 3 0 1 1-6 0a3 3 0 1 1 6 0z M20 16a3 3 0 1 1-6 0a3 3 0 1 1 6 0z";
+    out property <string> speaker: "M11 5.5L6.5 9H4v6h2.5l4.5 3.5z M15.2 9.8a3.2 3.2 0 0 1 0 4.4";
+    out property <string> sparkle: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z";
+    out property <string> minus: "M6 12h12";
+    out property <string> plus: "M12 6v12 M6 12h12";
+    out property <string> close: "M7 7l10 10 M17 7L7 17";
+    // Go to the full window / shrink to the mini player.
+    out property <string> expand: "M14 4h6v6 M10 20H4v-6 M20 4l-6.5 6.5 M4 20l6.5-6.5";
+    out property <string> shrink: "M4 14h6v6 M20 10h-6V4 M14 10l6.5-6.5 M10 14l-6.5 6.5";
+    out property <string> fullscreen: "M4 9V5a1 1 0 0 1 1-1h4 M15 4h4a1 1 0 0 1 1 1v4 M20 15v4a1 1 0 0 1-1 1h-4 M9 20H5a1 1 0 0 1-1-1v-4";
+    out property <string> captions: "M4 6.5A1.5 1.5 0 0 1 5.5 5h13A1.5 1.5 0 0 1 20 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z M10.5 10.2a2.2 2.2 0 1 0 0 3.6 M16.5 10.2a2.2 2.2 0 1 0 0 3.6";
+    out property <string> list: "M9 6h11 M9 12h11 M9 18h11 M4.5 6h.01 M4.5 12h.01 M4.5 18h.01";
+    out property <string> check: "M5 12.5l4.5 4.5L19 7.5";
+    out property <string> heart: "M12 20s-7-4.4-9.2-8.6C1.4 8.6 3 5 6.5 5c2 0 3.5 1.2 5.5 3.3C14 6.2 15.5 5 17.5 5 21 5 22.6 8.6 21.2 11.4 19 15.6 12 20 12 20z";
+    out property <string> search: "M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 1 0 0-13z M15.5 15.5L20 20";
+    out property <string> songs: "M9 18V5.5l11-2V16 M9 18a3 3 0 1 1-6 0a3 3 0 1 1 6 0z M20 16a3 3 0 1 1-6 0a3 3 0 1 1 6 0z";
+    out property <string> album: "M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6z";
+    out property <string> person: "M12 4a4 4 0 1 0 0 8a4 4 0 1 0 0-8z M4.5 20c.8-3.6 3.9-5.5 7.5-5.5s6.7 1.9 7.5 5.5";
+    out property <string> film: "M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5z M8 4v16 M16 4v16 M4 9h4 M4 15h4 M16 9h4 M16 15h4";
+    out property <string> clock: "M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 1 0 0-17z M12 7.5V12l3 2";
+    out property <string> plus-circle: "M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 1 0 0-17z M12 8.5v7 M8.5 12h7";
+    out property <string> eq: "M6 4v16 M12 4v16 M18 4v16 M3.5 14h5 M9.5 8h5 M15.5 16h5";
+    out property <string> link: "M10 14a4.5 4.5 0 0 0 6.4 0l2.8-2.8a4.5 4.5 0 0 0-6.4-6.4l-1.2 1.2 M14 10a4.5 4.5 0 0 0-6.4 0l-2.8 2.8a4.5 4.5 0 0 0 6.4 6.4l1.2-1.2";
+    out property <string> quote: "M5 11.5h4.5V17H4v-4.5C4 9 5.5 7 8.5 6.5 M14.5 11.5H19V17h-5.5v-4.5c0-3.5 1.5-5.5 4.5-6";
+    out property <string> trash: "M4.5 7h15 M9.5 7V5.2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V7 M6.5 7l.9 11.6a1.6 1.6 0 0 0 1.6 1.4h6a1.6 1.6 0 0 0 1.6-1.4L17.5 7 M10.3 11v5.5 M13.7 11v5.5";
+    out property <string> bookmark: "M6.5 4h11a1 1 0 0 1 1 1v15l-6.5-4-6.5 4V5a1 1 0 0 1 1-1z";
+    out property <string> loop: "M7 7h10a3 3 0 0 1 3 3v1 M17 17H7a3 3 0 0 1-3-3v-1 M14.5 4.5L17 7l-2.5 2.5 M9.5 19.5L7 17l2.5-2.5";
+}
+
+export component Icon inherits Path {
+    in property <string> icon;
+    in property <bool> solid: false;
+    in property <color> tint: Theme.fg;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: icon;
+    fill: solid ? tint : transparent;
+    stroke: solid ? transparent : tint;
+    stroke-width: 1.8px;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+}
+
+export component IconButton inherits Rectangle {
+    in property <string> icon;
+    in property <bool> solid: false;
+    in property <bool> active: false;
+    in property <length> size: 34px;
+    in property <length> icon-size: 18px;
+    in property <color> tint: active ? Theme.accent : Theme.fg;
+    in property <string> badge: "";
+    // The row underneath loses its hover when the pointer reaches the button.
+    out property <bool> hovered: ta.has-hover;
+    callback clicked();
+    width: size;
+    height: size;
+    border-radius: size / 2;
+    background: ta.pressed ? Theme.hover.darker(0.2) : ta.has-hover ? Theme.hover : transparent;
+    animate background { duration: 140ms; }
+
+    Icon {
+        icon: root.icon;
+        solid: root.solid;
+        tint: root.tint;
+        width: ta.pressed ? root.icon-size * 0.88 : root.icon-size;
+        height: self.width;
+        animate width { duration: 120ms; easing: ease-out; }
+    }
+    if root.badge != "": Rectangle {
+        x: root.width - 13px;
+        y: 3px;
+        width: 12px;
+        height: 12px;
+        border-radius: 6px;
+        background: Theme.accent;
+        Text {
+            text: root.badge;
+            color: Theme.on-accent;
+            font-size: 8px;
+            font-weight: 700;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// The big round play / pause button.
+export component PlayButton inherits Rectangle {
+    in property <bool> playing;
+    callback clicked();
+    width: 62px;
+    height: 62px;
+    border-radius: self.width / 2;
+    background: ta.pressed ? Theme.fg.darker(0.15) : Theme.fg;
+    drop-shadow-blur: 22px;
+    drop-shadow-offset-y: 8px;
+    drop-shadow-color: #000000.with-alpha(Theme.dark ? 0.45 : 0.18);
+    Icon {
+        icon: root.playing ? Icons.pause : Icons.play;
+        solid: true;
+        tint: Theme.base;
+        width: ta.pressed ? 22px : 26px;
+        height: self.width;
+        animate width { duration: 160ms; easing: ease-out-back; }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// A thin track that thickens on hover, like the scrubber in Music.app.
+export component NSlider inherits Rectangle {
+    in property <float> value; // 0..1
+    in property <color> fill-color: Theme.fg.with-alpha(0.9);
+    in property <length> rest-thickness: 5px;
+    in property <color> track-color: Theme.fg.with-alpha(0.16);
+    out property <bool> dragging: ta.pressed;
+    out property <float> shown: ta.pressed ? drag-value : Math.clamp(value, 0, 1);
+    callback moved(float);
+    callback released(float);
+    property <float> drag-value;
+    property <bool> active: ta.has-hover || ta.pressed;
+    height: 20px;
+
+    track := Rectangle {
+        y: (parent.height - self.height) / 2;
+        width: 100%;
+        height: root.active ? root.rest-thickness + 4px : root.rest-thickness;
+        border-radius: self.height / 2;
+        background: root.track-color;
+        clip: true;
+        animate height { duration: 180ms; easing: ease-out; }
+        // Its own rounded ends: the software renderer doesn't clip to the track's curve.
+        Rectangle {
+            x: 0;
+            width: root.shown <= 0 ? 0 : Math.max(parent.height, parent.width * root.shown);
+            height: 100%;
+            border-radius: parent.height / 2;
+            background: root.fill-color;
+        }
+    }
+    Rectangle {
+        width: 14px;
+        height: 14px;
+        border-radius: 7px;
+        x: root.width * root.shown - 7px;
+        y: (root.height - 14px) / 2;
+        background: #ffffff;
+        drop-shadow-blur: 6px;
+        drop-shadow-color: #00000055;
+        opacity: root.active ? 1 : 0;
+        animate opacity { duration: 160ms; }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                root.drag-value = Math.clamp(self.mouse-x / root.width, 0, 1);
+                root.moved(root.drag-value);
+            } else if e.kind == PointerEventKind.up {
+                root.released(root.drag-value);
+            }
+        }
+        moved => {
+            if self.pressed {
+                root.drag-value = Math.clamp(self.mouse-x / root.width, 0, 1);
+                root.moved(root.drag-value);
+            }
+        }
+        scroll-event(e) => {
+            root.released(Math.clamp(root.value + (e.delta-y > 0 ? 0.04 : -0.04), 0, 1));
+            accept
+        }
+    }
+}
+
+// A vertical slider for one equalizer band, -12..+12 dB.
+export component BandSlider inherits Rectangle {
+    in property <float> gain; // dB
+    in property <bool> enabled: true;
+    callback changed(float);
+    property <float> drag;
+    property <float> shown: ta.pressed ? drag : gain;
+    property <float> frac: (shown + 12) / 24;
+    width: 28px;
+    // track
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        width: 5px;
+        border-radius: 2.5px;
+        background: Theme.fg.with-alpha(0.14);
+    }
+    // fill from the middle line
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        width: 5px;
+        border-radius: 2.5px;
+        y: root.frac > 0.5 ? root.height * (1 - root.frac) : root.height / 2;
+        height: Math.abs(root.frac - 0.5) * root.height;
+        background: root.enabled ? Theme.accent : Theme.muted;
+    }
+    Rectangle {
+        y: root.height / 2;
+        x: 6px;
+        width: parent.width - 12px;
+        height: 1px;
+        background: Theme.fg.with-alpha(0.2);
+    }
+    Rectangle {
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        x: (parent.width - self.width) / 2;
+        y: root.height * (1 - root.frac) - 9px;
+        background: #ffffff;
+        drop-shadow-blur: 5px;
+        drop-shadow-color: #00000050;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                root.drag = Math.round((0.5 - self.mouse-y / root.height) * 24 * 2) / 2;
+                root.drag = Math.clamp(root.drag, -12, 12);
+                root.changed(root.drag);
+            }
+        }
+        moved => {
+            if self.pressed {
+                root.drag = Math.clamp(Math.round((0.5 - self.mouse-y / root.height) * 24 * 2) / 2, -12, 12);
+                root.changed(root.drag);
+            }
+        }
+        double-clicked => { root.changed(0); }
+    }
+}
+
+// A row of choices with a pill that slides to the selected one.
+export component Segmented inherits Rectangle {
+    in property <[string]> items;
+    in-out property <int> selected;
+    callback changed(int);
+    height: 32px;
+    border-radius: 9px;
+    background: Theme.faint;
+    property <length> cell: (self.width - 6px) / Math.max(1, items.length);
+
+    Rectangle {
+        x: 3px + root.cell * root.selected;
+        y: 3px;
+        width: root.cell;
+        height: parent.height - 6px;
+        border-radius: 7px;
+        background: Theme.dark ? #ffffff.with-alpha(0.16) : #ffffff;
+        drop-shadow-blur: 6px;
+        drop-shadow-color: #00000022;
+        animate x { duration: 260ms; easing: cubic-bezier(0.3, 1.3, 0.5, 1); }
+    }
+    for item[i] in root.items: Rectangle {
+        x: 3px + root.cell * i;
+        width: root.cell;
+        height: root.height;
+        Text {
+            text: item;
+            color: i == root.selected ? Theme.fg : Theme.muted;
+            font-size: 13px;
+            font-weight: i == root.selected ? 600 : 500;
+        }
+        TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                root.selected = i;
+                root.changed(i);
+            }
+        }
+    }
+}
+
+export component Switch inherits Rectangle {
+    in-out property <bool> on;
+    callback toggled(bool);
+    width: 42px;
+    height: 25px;
+    border-radius: self.height / 2;
+    background: on ? Theme.accent : Theme.fg.with-alpha(0.18);
+    animate background { duration: 200ms; }
+    Rectangle {
+        width: 21px;
+        height: 21px;
+        y: 2px;
+        x: root.on ? root.width - self.width - 2px : 2px;
+        border-radius: self.height / 2;
+        background: #ffffff;
+        drop-shadow-blur: 4px;
+        drop-shadow-color: #00000040;
+        animate x { duration: 260ms; easing: cubic-bezier(0.3, 1.4, 0.5, 1); }
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.on = !root.on;
+            root.toggled(root.on);
+        }
+    }
+}
+
+export component PrimaryButton inherits Rectangle {
+    in property <string> text;
+    in property <string> icon: "";
+    callback clicked();
+    height: 38px;
+    min-width: 110px;
+    horizontal-stretch: 0;
+    border-radius: 11px;
+    background: ta.pressed ? Theme.accent.darker(0.15) : ta.has-hover ? Theme.accent.brighter(0.08) : Theme.accent;
+    drop-shadow-blur: 16px;
+    drop-shadow-offset-y: 6px;
+    drop-shadow-color: Theme.accent.with-alpha(0.35);
+    animate background { duration: 140ms; }
+    HorizontalLayout {
+        padding-left: 18px;
+        padding-right: 18px;
+        spacing: 8px;
+        alignment: center;
+        if root.icon != "": Icon {
+            icon: root.icon;
+            tint: Theme.on-accent;
+            width: 17px;
+            height: 17px;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.text;
+            color: Theme.on-accent;
+            font-size: 14px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component GhostButton inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+    height: 38px;
+    min-width: 96px;
+    horizontal-stretch: 0;
+    border-radius: 11px;
+    background: ta.pressed ? Theme.hover.darker(0.2) : ta.has-hover ? Theme.hover : Theme.faint;
+    animate background { duration: 140ms; }
+    Text {
+        text: root.text;
+        color: Theme.fg;
+        font-size: 14px;
+        font-weight: 500;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// The three macOS window buttons. Glyphs appear when you hover the group.
+export component TrafficLights inherits Rectangle {
+    callback close();
+    callback minimize();
+    callback zoom();
+    width: 56px;
+    height: 14px;
+    property <bool> show-glyphs: ta.has-hover;
+    ta := TouchArea {
+        HorizontalLayout {
+            spacing: 8px;
+            for c[i] in [
+                { fill: #ff5f57, edge: #e2463f, glyph: "M8.5 8.5l7 7 M15.5 8.5l-7 7" },
+                { fill: #febc2e, edge: #dea123, glyph: "M7.5 12h9" },
+                { fill: #28c840, edge: #1aab29, glyph: "M8 8h5.5L8 13.5z M16 16h-5.5L16 10.5z" },
+            ]: Rectangle {
+                width: 12px;
+                height: 12px;
+                border-radius: 6px;
+                background: c.fill;
+                border-width: 0.5px;
+                border-color: c.edge;
+                Path {
+                    viewbox-width: 24;
+                    viewbox-height: 24;
+                    width: 12px;
+                    height: 12px;
+                    commands: c.glyph;
+                    stroke: #000000.with-alpha(0.55);
+                    fill: i == 2 ? #000000.with-alpha(0.55) : transparent;
+                    stroke-width: 1.4px;
+                    stroke-line-cap: round;
+                    opacity: root.show-glyphs ? 1 : 0;
+                    animate opacity { duration: 120ms; }
+                }
+                TouchArea {
+                    clicked => {
+                        if i == 0 { root.close(); } else if i == 1 { root.minimize(); } else { root.zoom(); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A floating glass card for sheets and empty states.
+export component GlassCard inherits Rectangle {
+    border-radius: 18px;
+    background: Theme.sheet;
+    border-width: 1px;
+    border-color: Theme.hairline;
+    drop-shadow-blur: 50px;
+    drop-shadow-offset-y: 20px;
+    drop-shadow-color: #000000.with-alpha(Theme.dark ? 0.5 : 0.18);
+}
+
+export component SectionLabel inherits Text {
+    color: Theme.muted;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+}
