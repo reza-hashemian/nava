@@ -430,6 +430,7 @@ impl Player {
         }
         self.refresh_sessions();
         self.store.set_setting("last_session", name);
+        self.library_follow_session();
     }
 
     fn switch_session(&mut self, name: &str) {
@@ -471,6 +472,7 @@ impl Player {
                     self.switch_session("Main");
                 }
                 self.store.delete_session(name);
+                self.catalog.forget_session(name);
             }
             _ => return,
         }

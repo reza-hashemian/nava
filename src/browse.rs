@@ -326,7 +326,7 @@ impl Player {
 
     /// Re-index the library folders in the background.
     pub fn start_scan(&mut self) {
-        if self.scanning || self.catalog.dirs().is_empty() {
+        if self.scanning || self.catalog.all_dirs().is_empty() {
             return;
         }
         self.scanning = true;
@@ -371,6 +371,18 @@ impl Player {
         self.rescan_timer.start(TimerMode::SingleShot, Duration::from_secs(600), || {
             with(|p| p.start_scan());
         });
+    }
+
+    /// The library follows the session: show this session's folders.
+    pub fn library_follow_session(&mut self) {
+        self.catalog.set_session(&self.session);
+        self.ui().set_library_empty(self.catalog.is_empty());
+        self.refresh_library_folders();
+        self.album_grid = None;
+        if self.view != "now" {
+            let v = if matches!(self.view.as_str(), "album" | "artist" | "search") { "songs".to_string() } else { self.view.clone() };
+            self.show_view(&v);
+        }
     }
 
     pub fn init_library(&mut self) {

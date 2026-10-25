@@ -38,8 +38,15 @@ pub enum Filter {
     Videos,
 }
 
+/// The session whose library is everything (the others show only their own folders).
+pub const MAIN_SESSION: &str = "Main";
+
 pub struct Catalog {
     db: Connection,
+    /// The session being browsed: its folders are what the library shows.
+    session: String,
+    /// SQL condition on `path` for that session's folders ("1" = everything).
+    scope: String,
 }
 
 pub fn db_path() -> PathBuf {
@@ -64,6 +71,15 @@ fn open(path: &Path) -> rusqlite::Result<Connection> {
         "PRAGMA journal_mode=WAL;
          PRAGMA synchronous=NORMAL;
          CREATE TABLE IF NOT EXISTS library_dirs (path TEXT PRIMARY KEY);
+         -- Each session has its own library folders. (library_dirs is the old,
+         -- shared list: its folders move to Main.)
+         CREATE TABLE IF NOT EXISTS session_dirs (
+             session TEXT NOT NULL,
+             path TEXT NOT NULL,
+             PRIMARY KEY (session, path)
+         );
+         INSERT OR IGNORE INTO session_dirs (session, path) SELECT 'Main', path FROM library_dirs;
+         DELETE FROM library_dirs;
          CREATE TABLE IF NOT EXISTS tracks (
              path TEXT PRIMARY KEY,
              title TEXT NOT NULL,
@@ -111,35 +127,100 @@ fn song(r: &rusqlite::Row) -> rusqlite::Result<Song> {
 
 const SONG_COLS: &str = "path, title, artist, album, duration, favorite";
 
+/// SQL condition: `path` is inside one of `dirs`. Paths are compared as plain
+/// text prefixes (LIKE would treat `_` and `%` in folder names as wildcards).
+fn scope_sql(dirs: &[PathBuf]) -> String {
+    if dirs.is_empty() {
+        return "0".into();
+    }
+    let sep = std::path::MAIN_SEPARATOR;
+    let parts: Vec<String> = dirs
+        .iter()
+        .map(|d| {
+            let d = d.to_string_lossy();
+            let prefix = format!("{}{sep}", d.trim_end_matches(sep));
+            format!("substr(path, 1, {}) = '{}'", prefix.chars().count(), prefix.replace('\'', "''"))
+        })
+        .collect();
+    format!("({})", parts.join(" OR "))
+}
+
+fn query_dirs(db: &Connection, sql: &str, arg: Option<&str>) -> Vec<PathBuf> {
+    let Ok(mut st) = db.prepare(sql) else { return Vec::new() };
+    let get = |r: &rusqlite::Row| r.get::<_, String>(0);
+    let rows = match arg {
+        Some(a) => st.query_map([a], get).map(|r| r.flatten().collect::<Vec<_>>()),
+        None => st.query_map([], get).map(|r| r.flatten().collect::<Vec<_>>()),
+    };
+    rows.unwrap_or_default().into_iter().map(PathBuf::from).collect()
+}
+
 impl Catalog {
     pub fn open() -> anyhow::Result<Catalog> {
-        Ok(Catalog { db: open(&db_path())? })
+        Self::with_db(open(&db_path())?)
     }
 
     #[cfg(test)]
     fn open_at(path: &Path) -> anyhow::Result<Catalog> {
-        Ok(Catalog { db: open(path)? })
+        Self::with_db(open(path)?)
     }
 
+    fn with_db(db: Connection) -> anyhow::Result<Catalog> {
+        let mut c = Catalog { db, session: MAIN_SESSION.into(), scope: "1".into() };
+        c.set_session(MAIN_SESSION);
+        Ok(c)
+    }
+
+    /// Browse another session's library.
+    pub fn set_session(&mut self, name: &str) {
+        self.session = name.to_string();
+        self.scope = if name == MAIN_SESSION { "1".into() } else { scope_sql(&self.dirs()) };
+    }
+
+    /// Every library folder, of every session (what the scanner indexes).
+    pub fn all_dirs(&self) -> Vec<PathBuf> {
+        query_dirs(&self.db, "SELECT DISTINCT path FROM session_dirs ORDER BY path", None)
+    }
+
+    /// The current session's folders. Main's library is all of them.
     pub fn dirs(&self) -> Vec<PathBuf> {
-        let mut st = match self.db.prepare("SELECT path FROM library_dirs ORDER BY path") {
-            Ok(s) => s,
-            Err(_) => return Vec::new(),
+        if self.session == MAIN_SESSION {
+            return self.all_dirs();
+        }
+        query_dirs(&self.db, "SELECT path FROM session_dirs WHERE session = ?1 ORDER BY path", Some(&self.session))
+    }
+
+    pub fn add_dir(&mut self, dir: &Path) {
+        let _ = self.db.execute(
+            "INSERT OR IGNORE INTO session_dirs (session, path) VALUES (?1, ?2)",
+            params![self.session, dir.to_string_lossy()],
+        );
+        let name = self.session.clone();
+        self.set_session(&name);
+    }
+
+    /// A deleted session's folders leave with it.
+    pub fn forget_session(&mut self, name: &str) {
+        let current = std::mem::replace(&mut self.session, name.to_string());
+        for d in self.dirs() {
+            self.remove_dir(&d);
+        }
+        self.set_session(&current);
+    }
+
+    /// Take a folder out of this session's library (out of every session's, in
+    /// Main). Its files stay on disk; they just leave the index unless another
+    /// library folder still holds them.
+    pub fn remove_dir(&mut self, dir: &Path) {
+        let p = dir.to_string_lossy();
+        let _ = if self.session == MAIN_SESSION {
+            self.db.execute("DELETE FROM session_dirs WHERE path = ?1", [&p])
+        } else {
+            self.db.execute("DELETE FROM session_dirs WHERE session = ?1 AND path = ?2", params![self.session, p])
         };
-        st.query_map([], |r| r.get::<_, String>(0))
-            .map(|rows| rows.flatten().map(PathBuf::from).collect())
-            .unwrap_or_default()
-    }
-
-    pub fn add_dir(&self, dir: &Path) {
-        let _ = self.db.execute("INSERT OR IGNORE INTO library_dirs (path) VALUES (?1)", [dir.to_string_lossy()]);
-    }
-
-    /// Take a folder out of the library. Its files stay on disk; they just
-    /// leave the index (unless another library folder still holds them).
-    pub fn remove_dir(&self, dir: &Path) {
-        let _ = self.db.execute("DELETE FROM library_dirs WHERE path = ?1", [dir.to_string_lossy()]);
-        let others = self.dirs();
+        let name = self.session.clone();
+        self.set_session(&name);
+        let others = self.all_dirs();
         let Ok(mut st) = self.db.prepare("SELECT path FROM tracks") else { return };
         let paths: Vec<String> =
             st.query_map([], |r| r.get::<_, String>(0)).map(|r| r.flatten().collect()).unwrap_or_default();
@@ -154,28 +235,31 @@ impl Catalog {
         let _ = tx.commit();
     }
 
+    /// Whether this session's library has nothing in it.
     pub fn is_empty(&self) -> bool {
-        self.db.query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get::<_, i64>(0)).unwrap_or(0) == 0
+        let sql = format!("SELECT COUNT(*) FROM tracks WHERE {}", self.scope);
+        self.db.query_row(&sql, [], |r| r.get::<_, i64>(0)).unwrap_or(0) == 0
     }
 
     pub fn songs(&self, filter: &Filter) -> Vec<Song> {
+        let sc = &self.scope;
         let (sql, arg): (String, Option<String>) = match filter {
-            Filter::Songs => (format!("SELECT {SONG_COLS} FROM tracks WHERE is_video = 0 ORDER BY title COLLATE NOCASE"), None),
-            Filter::Videos => (format!("SELECT {SONG_COLS} FROM tracks WHERE is_video = 1 ORDER BY path"), None),
-            Filter::Favorites => (format!("SELECT {SONG_COLS} FROM tracks WHERE favorite = 1 ORDER BY title COLLATE NOCASE"), None),
-            Filter::Recent => (format!("SELECT {SONG_COLS} FROM tracks ORDER BY added_at DESC, path LIMIT 200"), None),
+            Filter::Songs => (format!("SELECT {SONG_COLS} FROM tracks WHERE is_video = 0 AND {sc} ORDER BY title COLLATE NOCASE"), None),
+            Filter::Videos => (format!("SELECT {SONG_COLS} FROM tracks WHERE is_video = 1 AND {sc} ORDER BY path"), None),
+            Filter::Favorites => (format!("SELECT {SONG_COLS} FROM tracks WHERE favorite = 1 AND {sc} ORDER BY title COLLATE NOCASE"), None),
+            Filter::Recent => (format!("SELECT {SONG_COLS} FROM tracks WHERE {sc} ORDER BY added_at DESC, path LIMIT 200"), None),
             Filter::Album(a) => (
-                format!("SELECT {SONG_COLS} FROM tracks WHERE album = ?1 ORDER BY track_no, title COLLATE NOCASE"),
+                format!("SELECT {SONG_COLS} FROM tracks WHERE album = ?1 AND {sc} ORDER BY track_no, title COLLATE NOCASE"),
                 Some(a.clone()),
             ),
             Filter::Artist(a) => (
-                format!("SELECT {SONG_COLS} FROM tracks WHERE artist = ?1 ORDER BY album COLLATE NOCASE, track_no, title"),
+                format!("SELECT {SONG_COLS} FROM tracks WHERE artist = ?1 AND {sc} ORDER BY album COLLATE NOCASE, track_no, title"),
                 Some(a.clone()),
             ),
             Filter::Search(q) => (
                 format!(
                     "SELECT {SONG_COLS} FROM tracks
-                     WHERE title LIKE ?1 OR artist LIKE ?1 OR album LIKE ?1 OR path LIKE ?1
+                     WHERE (title LIKE ?1 OR artist LIKE ?1 OR album LIKE ?1 OR path LIKE ?1) AND {sc}
                      ORDER BY title COLLATE NOCASE LIMIT 500"
                 ),
                 Some(format!("%{}%", q.trim())),
@@ -194,10 +278,11 @@ impl Catalog {
     }
 
     pub fn albums(&self) -> Vec<Album> {
-        let Ok(mut st) = self.db.prepare(
+        let Ok(mut st) = self.db.prepare(&format!(
             "SELECT album, MIN(artist) FROM tracks
-             WHERE album != '' AND is_video = 0 GROUP BY album ORDER BY album COLLATE NOCASE",
-        ) else {
+             WHERE album != '' AND is_video = 0 AND {} GROUP BY album ORDER BY album COLLATE NOCASE",
+            self.scope
+        )) else {
             return Vec::new();
         };
         st.query_map([], |r| {
@@ -208,10 +293,11 @@ impl Catalog {
     }
 
     pub fn artists(&self) -> Vec<(String, usize)> {
-        let Ok(mut st) = self.db.prepare(
-            "SELECT artist, COUNT(*) FROM tracks WHERE artist != '' AND is_video = 0
+        let Ok(mut st) = self.db.prepare(&format!(
+            "SELECT artist, COUNT(*) FROM tracks WHERE artist != '' AND is_video = 0 AND {}
              GROUP BY artist ORDER BY artist COLLATE NOCASE",
-        ) else {
+            self.scope
+        )) else {
             return Vec::new();
         };
         st.query_map([], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as usize)))
@@ -261,7 +347,7 @@ impl Catalog {
 pub fn scan(on_progress: impl Fn(usize)) -> bool {
     let Ok(db) = open(&db_path()) else { return false };
     let dirs: Vec<PathBuf> = {
-        let Ok(mut st) = db.prepare("SELECT path FROM library_dirs") else { return false };
+        let Ok(mut st) = db.prepare("SELECT DISTINCT path FROM session_dirs") else { return false };
         st.query_map([], |r| r.get::<_, String>(0)).map(|r| r.flatten().map(PathBuf::from).collect()).unwrap_or_default()
     };
     let known: HashMap<String, i64> = {
@@ -340,7 +426,7 @@ mod tests {
     fn favorites_and_filters() {
         let dir = std::env::temp_dir().join(format!("nava-cat-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let cat = Catalog::open_at(&dir.join("c.db")).unwrap();
+        let mut cat = Catalog::open_at(&dir.join("c.db")).unwrap();
         for (p, title, album) in [("/m/a.mp3", "Alpha", "One"), ("/m/b.mp3", "Beta", "One"), ("/m/c.mkv", "Clip", "")] {
             cat.db
                 .execute(
@@ -361,6 +447,38 @@ mod tests {
         cat.remove_dir(Path::new("/m"));
         assert!(cat.dirs().is_empty());
         assert!(cat.is_empty());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn each_session_sees_its_own_folders() {
+        let dir = std::env::temp_dir().join(format!("nava-scope-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut cat = Catalog::open_at(&dir.join("c.db")).unwrap();
+        for p in ["/music/a.mp3", "/music/b.mp3", "/films/x.mkv", "/music_old/c.mp3", "/it's/d.mp3"] {
+            cat.db
+                .execute(
+                    "INSERT INTO tracks (path, title, artist, album, track_no, duration, mtime, added_at, is_video)
+                     VALUES (?1, ?1, 'X', '', 0, 60, 0, 0, ?2)",
+                    params![p, p.ends_with("mkv") as i64],
+                )
+                .unwrap();
+        }
+        cat.set_session("mu");
+        assert!(cat.is_empty(), "a new session starts with an empty library");
+        cat.add_dir(Path::new("/music"));
+        assert_eq!(cat.songs(&Filter::Songs).len(), 2, "/music_old is not inside /music");
+        assert!(cat.songs(&Filter::Videos).is_empty());
+        cat.set_session("vido");
+        cat.add_dir(Path::new("/films"));
+        cat.add_dir(Path::new("/it's"));
+        assert_eq!(cat.songs(&Filter::Videos).len(), 1);
+        assert_eq!(cat.songs(&Filter::Songs).len(), 1, "quotes in folder names are fine");
+        cat.set_session(MAIN_SESSION);
+        assert_eq!(cat.dirs().len(), 3, "Main shows every folder");
+        assert_eq!(cat.songs(&Filter::Songs).len(), 4);
+        cat.forget_session("vido");
+        assert_eq!(cat.all_dirs(), vec![PathBuf::from("/music")]);
         std::fs::remove_dir_all(dir).ok();
     }
 }

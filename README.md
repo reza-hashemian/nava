@@ -90,7 +90,9 @@ Media keys and the desktop's "now playing" widget work through MPRIS on Linux
 ## Library
 
 Add the folders where you keep music and videos (the ⊕ button at the bottom of
-the sidebar). Nava indexes them in the background and checks for new files
+the sidebar). Each session has its own library: folders you add in a session
+show up only there (say, films in "Videos" and music in "Music"), while Main
+shows every folder. Nava indexes them in the background and checks for new files
 every ten minutes, re-reading only files that changed.
 
 - Songs, Albums (a cover grid), Artists, Videos, Favorites, Recently Added
