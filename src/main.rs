@@ -2221,6 +2221,17 @@ fn run() -> anyhow::Result<()> {
             p.restore_geometry();
             p.apply_shape();
         });
+        #[cfg(target_os = "windows")]
+        with(|p| {
+            use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            let hwnd = p.ui().window().with_winit_window(|w| match w.window_handle().map(|h| h.as_raw()) {
+                Ok(RawWindowHandle::Win32(h)) => Some(h.hwnd.get() as *mut std::ffi::c_void),
+                _ => None,
+            });
+            if let (Some(Some(hwnd)), Some(system)) = (hwnd, p.system.as_mut()) {
+                system.attach_window(hwnd);
+            }
+        });
     });
 
     ui.show()?;

@@ -1,6 +1,6 @@
 [package]
 name = "nava"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 description = "A calm, glassy music and video player (Slint + libmpv)"
 license = "MIT"
@@ -31,6 +31,9 @@ souvlaki = "0.8.3"
 
 [build-dependencies]
 slint-build = "1.18.1"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
 
 [profile.release]
 opt-level = 3

@@ -25,6 +25,8 @@ type Media = media::Media;
 pub struct System {
     media: Option<Media>,
     _hotkeys: Option<hotkeys::Handle>,
+    #[cfg(target_os = "windows")]
+    run: fn(Cmd),
 }
 
 impl System {
@@ -32,7 +34,22 @@ impl System {
     pub fn new(run: fn(Cmd)) -> System {
         #[cfg(target_os = "linux")]
         watch_screen_lock(run);
-        System { media: Media::new(run), _hotkeys: hotkeys::start(run) }
+        // Windows media controls hang off the window, which doesn't exist yet:
+        // they start in `attach_window`.
+        #[cfg(target_os = "windows")]
+        return System { media: None, _hotkeys: hotkeys::start(run), run };
+        #[cfg(target_os = "macos")]
+        return System { media: Media::new(run, None), _hotkeys: hotkeys::start(run) };
+        #[cfg(target_os = "linux")]
+        return System { media: Media::new(run), _hotkeys: hotkeys::start(run) };
+    }
+
+    /// Windows: start the media controls once the window (its HWND) exists.
+    #[cfg(target_os = "windows")]
+    pub fn attach_window(&mut self, hwnd: *mut std::ffi::c_void) {
+        if self.media.is_none() {
+            self.media = Media::new(self.run, Some(hwnd));
+        }
     }
 
     pub fn set_track(&mut self, title: &str, artist: &str, album: &str, duration: f64, cover: Option<&Path>) {
@@ -111,8 +128,8 @@ mod media {
     pub struct Media(MediaControls);
 
     impl Media {
-        pub fn new(run: fn(Cmd)) -> Option<Media> {
-            let config = PlatformConfig { display_name: "Nava", dbus_name: "nava", hwnd: None };
+        pub fn new(run: fn(Cmd), hwnd: Option<*mut std::ffi::c_void>) -> Option<Media> {
+            let config = PlatformConfig { display_name: "Nava", dbus_name: "nava", hwnd };
             let mut controls = MediaControls::new(config).map_err(|e| eprintln!("nava: media keys unavailable: {e:?}")).ok()?;
             controls
                 .attach(move |event| {
