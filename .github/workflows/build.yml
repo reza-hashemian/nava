@@ -1,6 +1,7 @@
 # Builds Nava for Linux, macOS and Windows.
 # - Every push to main / PR: builds everything and keeps the files as workflow artifacts.
 # - A tag like v0.2.0: also publishes them as a GitHub Release.
+# File names carry no version, so README links to releases/latest/download/<name> keep working.
 name: Build
 
 on:
@@ -55,9 +56,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cargo deb --no-build --no-strip -o "dist/nava_${VERSION}_${{ matrix.deb_arch }}.deb"
-          cargo generate-rpm -o "dist/nava-${VERSION}-1.${{ matrix.arch }}.rpm"
-          T="nava-${VERSION}-linux-${{ matrix.arch }}"
+          cargo deb --no-build --no-strip -o "dist/nava-linux-${{ matrix.arch }}.deb"
+          cargo generate-rpm -o "dist/nava-linux-${{ matrix.arch }}.rpm"
+          T="nava-linux-${{ matrix.arch }}"
           mkdir -p "$T"
           cp target/release/nava README.md packaging/linux/nava.desktop ui/icons/nava.svg "$T/"
           tar -czf "dist/$T.tar.gz" "$T"
@@ -106,7 +107,7 @@ jobs:
           mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
           cp ui/icons/nava-256.png AppDir/usr/share/icons/hicolor/256x256/apps/nava.png
           export APPIMAGE_EXTRACT_AND_RUN=1
-          export LDAI_OUTPUT="nava-${VERSION}-$A.AppImage"
+          export LDAI_OUTPUT="nava-linux-$A.AppImage"
           ./linuxdeploy --appdir AppDir \
             -e target/release/nava \
             -d packaging/linux/nava.desktop \
@@ -175,7 +176,7 @@ jobs:
           codesign --force --deep --sign - "$APP"
 
           hdiutil create -volname Nava -srcfolder "$APP" -ov -format UDZO \
-            "dist/nava-${VERSION}-macos-${{ matrix.arch }}.dmg"
+            "dist/nava-macos-${{ matrix.arch }}.dmg"
           rm -rf "$APP"
           ls -la dist
 
@@ -235,7 +236,7 @@ jobs:
           $out = "dist\nava"
           New-Item -ItemType Directory -Force $out | Out-Null
           Copy-Item target\release\nava.exe, $env:MPV_DLL, README.md $out
-          Compress-Archive -Path "$out\*" -DestinationPath "dist\nava-$env:VERSION-windows-x64.zip"
+          Compress-Archive -Path "$out\*" -DestinationPath "dist\nava-windows-x64.zip"
 
           choco install innosetup -y --no-progress | Out-Null
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Qp `

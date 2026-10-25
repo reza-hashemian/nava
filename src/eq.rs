@@ -161,9 +161,12 @@ pub fn choose(path: &Path, t: &Tags) -> &'static str {
 }
 
 /// The response curve for drawing: a smooth line through the 10 points, and
-/// the same shape closed off for the shaded area. Viewbox: 1000 × 200.
-pub fn curve(g: &[f32; 10]) -> (String, String) {
-    let pts: Vec<(f32, f32)> = g.iter().enumerate().map(|(i, v)| ((i as f32 + 0.5) * 100.0, 100.0 - v * 7.5)).collect();
+/// the same shape closed off for the shaded area. Viewbox: 1000 × (1000 × `ratio`),
+/// where `ratio` is the box's height / width. Slint keeps a path's aspect ratio,
+/// so the viewbox has to match the box or the curve misses the points.
+pub fn curve(g: &[f32; 10], ratio: f32) -> (String, String) {
+    let h = 1000.0 * ratio.clamp(0.05, 5.0);
+    let pts: Vec<(f32, f32)> = g.iter().enumerate().map(|(i, v)| ((i as f32 + 0.5) * 100.0, h * (100.0 - v * 7.5) / 200.0)).collect();
     let mut all = vec![(0.0, pts[0].1)];
     all.extend(&pts);
     all.push((1000.0, pts[9].1));
@@ -176,7 +179,7 @@ pub fn curve(g: &[f32; 10]) -> (String, String) {
         let c2 = (p2.0 - (p3.0 - p1.0) / 6.0, p2.1 - (p3.1 - p1.1) / 6.0);
         d.push_str(&format!(" C {:.1} {:.1} {:.1} {:.1} {:.1} {:.1}", c1.0, c1.1, c2.0, c2.1, p2.0, p2.1));
     }
-    let fill = format!("{d} L 1000 200 L 0 200 Z");
+    let fill = format!("{d} L 1000 {h:.1} L 0 {h:.1} Z");
     (d, fill)
 }
 
@@ -216,6 +219,14 @@ impl Player {
         self.store.set_setting("eq_custom", &lines.join("\n"));
     }
 
+    /// Redraw the curve for the current gains and box shape.
+    pub fn draw_eq_curve(&self) {
+        let ui = self.ui();
+        let (line, fill) = curve(&self.eq.effective(), ui.get_eq_box_ratio());
+        ui.set_eq_curve(line.into());
+        ui.set_eq_fill(fill.into());
+    }
+
     pub fn apply_eq(&mut self) {
         let g = self.eq.effective();
         let ui = self.ui();
@@ -225,9 +236,7 @@ impl Player {
         ui.set_eq_preset(if self.eq.auto { self.eq.auto_choice.into() } else { self.eq.preset.clone().into() });
         ui.set_eq_preamp(self.eq.preamp);
         ui.set_eq_gains(ModelRc::new(VecModel::from(g.to_vec())));
-        let (line, fill) = curve(&g);
-        ui.set_eq_curve(line.into());
-        ui.set_eq_fill(fill.into());
+        self.draw_eq_curve();
 
         let flat = g.iter().all(|x| x.abs() < 0.05) && self.eq.preamp.abs() < 0.05;
         if !self.eq.on || flat {
@@ -367,7 +376,7 @@ mod tests {
 
     #[test]
     fn curve_has_ten_segments_plus_edges() {
-        let (line, fill) = curve(&[0.0; 10]);
+        let (line, fill) = curve(&[0.0; 10], 0.2);
         assert_eq!(line.matches(" C ").count(), 11);
         assert!(fill.ends_with('Z'));
     }

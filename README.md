@@ -1,8 +1,49 @@
 # Nava
 
-A calm, glassy music player written in Rust. Slint for the interface, libmpv for playback.
+**English** · [فارسی](README.fa.md)
 
-## Build and run
+A calm, glassy music and video player written in Rust. Slint for the interface, libmpv for playback.
+Light on memory and CPU, with a "Code mode" mini player you can drive from your terminal.
+
+<p align="center">
+  <img src="docs/screenshots/now-playing.png" alt="Nava: Now Playing" width="860">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/albums.png" alt="Albums" width="420">
+  <img src="docs/screenshots/dark.png" alt="Dark theme" width="420">
+</p>
+<p align="center">
+  <img src="docs/screenshots/equalizer.png" alt="Equalizer" width="420">
+  <img src="docs/screenshots/songs.png" alt="Songs" width="420">
+</p>
+<p align="center">
+  <img src="docs/screenshots/mini.png" alt="Mini player" width="440">
+</p>
+
+<sub>Screenshots use made-up sample data.</sub>
+
+## Download
+
+| System | Download |
+| --- | --- |
+| **Windows** 10/11 (x64) | [Installer (.exe)](https://github.com/reza-hashemian/nava/releases/latest/download/nava-windows-x64-setup.exe) · [Portable (.zip)](https://github.com/reza-hashemian/nava/releases/latest/download/nava-windows-x64.zip) |
+| **macOS** Apple Silicon (M1–M4) | [nava-macos-arm64.dmg](https://github.com/reza-hashemian/nava/releases/latest/download/nava-macos-arm64.dmg) |
+| **macOS** Intel | [nava-macos-x86_64.dmg](https://github.com/reza-hashemian/nava/releases/latest/download/nava-macos-x86_64.dmg) |
+| **Linux** any distro (x86_64) | [AppImage](https://github.com/reza-hashemian/nava/releases/latest/download/nava-linux-x86_64.AppImage) |
+| **Debian / Ubuntu / Mint** (x86_64) | [.deb](https://github.com/reza-hashemian/nava/releases/latest/download/nava-linux-x86_64.deb) |
+| **Fedora / openSUSE / RHEL** (x86_64) | [.rpm](https://github.com/reza-hashemian/nava/releases/latest/download/nava-linux-x86_64.rpm) |
+| **Arch and others** (x86_64) | [.tar.gz](https://github.com/reza-hashemian/nava/releases/latest/download/nava-linux-x86_64.tar.gz) (needs `mpv` installed) |
+| **Linux ARM64** (Raspberry Pi 5, …) | [AppImage](https://github.com/reza-hashemian/nava/releases/latest/download/nava-linux-aarch64.AppImage) · [.deb](https://github.com/reza-hashemian/nava/releases/latest/download/nava-linux-aarch64.deb) · [.rpm](https://github.com/reza-hashemian/nava/releases/latest/download/nava-linux-aarch64.rpm) · [.tar.gz](https://github.com/reza-hashemian/nava/releases/latest/download/nava-linux-aarch64.tar.gz) |
+
+All versions: [Releases](https://github.com/reza-hashemian/nava/releases).
+
+- **Linux:** the `.deb` / `.rpm` packages need Debian 12+, Ubuntu 24.04+ or a recent Fedora/openSUSE; on older systems use the AppImage (`chmod +x` it, then run).
+- **macOS:** the app isn't signed with an Apple Developer ID. The first time, right-click Nava → **Open**, or run `xattr -dr com.apple.quarantine /Applications/Nava.app`.
+- **Windows:** SmartScreen may warn about an unknown publisher: **More info → Run anyway**. Tick "Add nava to PATH" in the installer to use the `nava` command in a terminal.
+- Links (YouTube and more) need [yt-dlp](https://github.com/yt-dlp/yt-dlp) on your PATH.
+
+## Build from source
 
 Needs Rust and libmpv (`sudo apt install libmpv-dev` on Debian/Ubuntu).
 
@@ -208,3 +249,7 @@ the one you're using. Set `NAVA_AO=null` to run silently, e.g. for screenshots, 
 (or an mpv `msg-level` like `all=v`) to see mpv's log.
 
 Inter is bundled under the SIL Open Font License (`ui/fonts/Inter-LICENSE.txt`).
+
+## License
+
+[MIT](LICENSE)

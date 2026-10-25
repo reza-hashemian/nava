@@ -1981,6 +1981,9 @@ fn main() -> anyhow::Result<()> {
     ui.on_album_columns_changed(|n| {
         with(|p| p.album_columns_changed(n.max(1) as usize));
     });
+    ui.on_eq_box_resized(|| {
+        with(|p| p.draw_eq_curve());
+    });
     ui.on_eq_band(|i, g| {
         with(|p| p.eq_band(i.max(0) as usize, g));
     });
@@ -2162,6 +2165,12 @@ fn main() -> anyhow::Result<()> {
         p.load_lyrics_settings();
         p.refresh_tool_menus();
     });
+    // Open on a library view, e.g. NAVA_VIEW=albums (handy for screenshots).
+    if let Ok(v) = std::env::var("NAVA_VIEW") {
+        Timer::single_shot(Duration::from_millis(800), move || {
+            with(|p| p.show_view(&v));
+        });
+    }
 
     // Once the window is on screen, put it where it was last time. (Placing it
     // earlier gets overridden by the window manager.)

@@ -760,6 +760,9 @@ export component AppWindow inherits Window {
     in property <[string]> eq-custom;
     in property <string> eq-curve;
     in property <string> eq-fill;
+    // Height / width of the curve box; the curve's viewbox follows it.
+    in-out property <float> eq-box-ratio: 0.33;
+    callback eq-box-resized();
     in-out property <bool> pause-on-lock: true;
 
     // Sleep timer, speed, A-B loop, bookmarks
@@ -3159,6 +3162,9 @@ export component AppWindow inherits Window {
                 height: Math.max(120px, Math.min(200px, root.height - 430px));
                 border-radius: 14px;
                 background: Theme.faint;
+                init => { root.eq-box-ratio = self.height / self.width; root.eq-box-resized(); }
+                changed width => { root.eq-box-ratio = self.height / self.width; root.eq-box-resized(); }
+                changed height => { root.eq-box-ratio = self.height / self.width; root.eq-box-resized(); }
                 Rectangle {
                     y: parent.height / 2;
                     height: 1px;
@@ -3168,7 +3174,7 @@ export component AppWindow inherits Window {
                     width: 100%;
                     height: 100%;
                     viewbox-width: 1000;
-                    viewbox-height: 200;
+                    viewbox-height: 1000 * root.eq-box-ratio;
                     commands: root.eq-fill;
                     fill: @linear-gradient(180deg, Theme.accent.with-alpha(root.eq-on ? 0.35 : 0.12) 0%, Theme.accent.with-alpha(0) 100%);
                     stroke: transparent;
@@ -3177,7 +3183,7 @@ export component AppWindow inherits Window {
                     width: 100%;
                     height: 100%;
                     viewbox-width: 1000;
-                    viewbox-height: 200;
+                    viewbox-height: 1000 * root.eq-box-ratio;
                     commands: root.eq-curve;
                     fill: transparent;
                     stroke: root.eq-on ? Theme.accent : Theme.muted;
