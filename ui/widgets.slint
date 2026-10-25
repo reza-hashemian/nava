@@ -82,7 +82,9 @@ export component Icon inherits Path {
     commands: icon;
     fill: solid ? tint : transparent;
     stroke: solid ? transparent : tint;
-    stroke-width: 1.8px;
+    // No stroke at all on solid icons: some renderers draw a "transparent"
+    // stroke anyway, which fattens the shapes and closes the gaps (‖ ⏮).
+    stroke-width: solid ? 0px : 1.8px;
     stroke-line-cap: round;
     stroke-line-join: round;
 }
