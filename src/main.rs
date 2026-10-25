@@ -1658,7 +1658,49 @@ fn run_cmd(cmd: Cmd) {
     handle_cmd(cmd);
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() {
+    std::panic::set_hook(Box::new(|info| {
+        let msg = match info.payload().downcast_ref::<&str>() {
+            Some(s) => s.to_string(),
+            None => info.payload().downcast_ref::<String>().cloned().unwrap_or_default(),
+        };
+        let at = info.location().map(|l| format!(" ({}:{})", l.file(), l.line())).unwrap_or_default();
+        report_fatal(&format!("crashed: {msg}{at}"));
+    }));
+    if let Err(e) = run() {
+        report_fatal(&format!("{e:#}"));
+        std::process::exit(1);
+    }
+}
+
+/// Where errors that ended the app are written (the GUI build has no console on Windows).
+fn crash_log_path() -> PathBuf {
+    dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("nava").join("nava.log")
+}
+
+/// Tell the user why Nava stopped: stderr, a log file, and a dialog when there's no terminal.
+fn report_fatal(msg: &str) {
+    use std::io::{IsTerminal, Write};
+    eprintln!("nava: {msg}");
+    let log = crash_log_path();
+    if let Some(dir) = log.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log) {
+        let when = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let _ = writeln!(f, "[{when}] {} {}: {msg}", env!("CARGO_PKG_VERSION"), std::env::consts::OS);
+    }
+    if !std::io::stderr().is_terminal() {
+        let _ = rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Error)
+            .set_title("Nava stopped")
+            .set_description(format!("{msg}\n\nThis was also saved to:\n{}", log.display()))
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show();
+    }
+}
+
+fn run() -> anyhow::Result<()> {
     let args = match parse_args() {
         Ok(a) => a,
         Err(e) => {
